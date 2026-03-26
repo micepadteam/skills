@@ -1,0 +1,10 @@
+{
+  "name": "micepad-skills",
+  "version": "0.1.0",
+  "description": "Micepad skills for Claude Code — manage events, participants, check-ins, campaigns, and more from your terminal using the Micepad CLI.",
+  "author": {
+    "name": "Micepad Team",
+    "email": "hello@micepad.co"
+  },
+  "license": "MIT"
+}

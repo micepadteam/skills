@@ -1,0 +1,4 @@
+{
+  "$schema": "https://cdn.anthropic.com/schemas/claude-code-marketplace/v0/plugin.schema.json",
+  "categories": ["productivity", "developer-tools"]
+}
