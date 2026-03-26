@@ -3,14 +3,14 @@ name: micepad
 description: >
   Interact with the Micepad event management platform via the Micepad CLI.
   Use for ANY Micepad question or action: managing events, participants,
-  check-ins, campaigns, groups, templates, and admin operations.
-  Full CLI coverage for event operations, participant management,
-  bulk imports/exports, campaign delivery, and live check-in monitoring.
+  check-ins, campaigns, groups, registration types, forms, badges, QR kiosks,
+  sessions, and admin operations. Full CLI coverage for the complete event
+  lifecycle — from creating the event to post-conference cleanup.
 license: MIT
 compatibility: Requires the Micepad CLI binary (`micepad`) installed and authenticated.
 metadata:
   author: Micepad Team
-  version: 0.1.0
+  version: 0.2.0
   homepage: https://github.com/micepadteam/skills
 invocable: true
 argument-hint: "[action] [args...]"
@@ -23,30 +23,41 @@ triggers:
   - checkin
   - campaign
   - pax
+  - badge
+  - registration form
+  - registration type
+  - kiosk
+  - qr login
+  - group
+  - import
+  - export
   - micepad event
   - micepad participant
   - micepad checkin
   - micepad campaign
   - micepad import
   - micepad export
+  - micepad form
+  - micepad badge
   - studio.micepad.co
   - launchpad.micepad.co
 ---
 
 # Micepad CLI Skill
 
-You are an agent that helps users interact with the **Micepad** event management platform through the `micepad` CLI.
+You are an agent that helps users interact with the **Micepad** event management platform through the `micepad` CLI. You understand the full event lifecycle — from creating an event through post-conference cleanup — and can execute any operation an event manager needs.
 
 ## Agent Invariants
 
 You MUST follow these rules at all times:
 
 1. **Never fabricate CLI commands.** Only use commands documented here or discovered via `micepad terminal tree` / `micepad help`.
-2. **Always confirm destructive actions** (sending campaigns, bulk imports with `--yes`, cancelling campaigns) before executing.
-3. **Prefer reading before writing.** List/show before create/update/delete.
+2. **Always confirm destructive actions** (sending campaigns, bulk imports with `--yes`, cancelling campaigns, revoking QR tokens) before executing.
+3. **Prefer reading before writing.** List/show before create/update/delete. For forms, list fields (including hidden ones) before adding new fields.
 4. **Respect the active event context.** Many commands operate on the currently selected event. Use `micepad whoami` to verify context before taking action.
-5. **Handle authentication gracefully.** If a command fails with auth errors, suggest `micepad login`.
-6. **Never expose or log credentials, tokens, or session data.**
+5. **Capture IDs from output.** Commands return prefixed IDs (e.g., `frm_abc12`, `cmp_xyz99`, `pax_abc123`). Parse them and use in subsequent commands.
+6. **Handle authentication gracefully.** If a command fails with auth errors, suggest `micepad login`.
+7. **Never expose or log credentials, tokens, or session data.**
 
 ## CLI Introspection
 
@@ -61,57 +72,318 @@ micepad pax help         # Participant commands help
 
 Always introspect before guessing. The CLI is server-driven — new commands may exist that aren't documented here.
 
+## Domain Model
+
+Understanding how Micepad entities relate:
+
+- **Account** → owns multiple **Events** (called Gatherings internally)
+- **Event** → has **Groups** (badge categories), **Registration Types** (ticket tiers), **Forms**, **Participants**, **Campaigns**, **Badges**, **Sessions**
+- **Groups** = visual categories for badge colors and access levels (e.g., Speakers, Sponsors, Staff, Attendees). A participant belongs to one group.
+- **Registration Types** = ticket tiers with capacity limits (e.g., Early Bird, General Admission, Speaker). Separate from groups — a participant has both a group AND a reg type.
+- **Forms** = registration forms with configurable fields. Each event gets a default form. Forms have a lifecycle: draft → published → unpublished.
+- **Badges** = printable name badge templates linked to groups. Each badge template has ordered fields (full_name, company, QR code, custom text, etc.).
+- **Campaigns** = email or WhatsApp messages built from sections (banner, content, QR code, CTA, event details). Recipients are added by status, group, or individually.
+- **QR Login Tokens** = time-limited access tokens for check-in kiosks and roaming devices.
+
 ## Quick Reference
+
+### Authentication & Context
 
 | Command | What it does |
 |---------|-------------|
-| `micepad login` | Authenticate via browser |
+| `micepad login` | Authenticate via browser (prints auth URL, user completes in browser) |
 | `micepad logout` | Clear session |
 | `micepad whoami` | Show current user, account, and active event |
+| `micepad accounts list` | List available accounts |
+| `micepad accounts use NAME` | Switch active account |
+
+### Events
+
+| Command | What it does |
+|---------|-------------|
 | `micepad events list` | List all events |
+| `micepad events create` | Create event (`--name`, `--slug`, `--format`, `--start`, `--end`, `--venue`, `--description`) |
 | `micepad events use SLUG` | Set active event context |
 | `micepad events current` | Show active event details |
 | `micepad events stats` | Event dashboard statistics |
+
+### Groups
+
+| Command | What it does |
+|---------|-------------|
+| `micepad groups list` | List all groups |
+| `micepad groups create` | Create group (`--name`, `--color`) |
+| `micepad groups show NAME` | Group details with RSVP breakdown |
+
+Available colors: gray, purple, blue, green, amber, red, indigo, pink (orange, teal may be unavailable).
+
+### Registration Types
+
+| Command | What it does |
+|---------|-------------|
+| `micepad regtypes list` | List registration types with capacity |
+| `micepad regtypes create` | Create reg type (`--name`, `--capacity`, `--default`) |
+
+### Forms
+
+| Command | What it does |
+|---------|-------------|
+| `micepad forms list` | List forms (shows form IDs like `frm_xxxxx`) |
+| `micepad forms add-field ID` | Add field (`--type`, `--label`, `--required`) |
+| `micepad forms update-field ID SLUG` | Update field (`--options`, `--placeholder`) |
+| `micepad forms fields ID` | List all fields including hidden ones |
+| `micepad forms reorder ID` | Reorder form fields |
+| `micepad forms update ID` | Update form settings (`--title`, `--subtitle`, `--description`, `--submit_label`) |
+| `micepad forms settings ID` | Show form configuration |
+| `micepad forms publish ID` | Publish form (makes it live) |
+| `micepad forms unpublish ID` | Close registration |
+| `micepad forms url ID` | Get the public registration URL |
+
+**Field types**: `company`, `job_title`, `country`, `dropdown`, `text`, `long_text`, `paragraph`
+
+**Important**: Default forms come with hidden fields (company_name, job_title). Always run `forms fields` first to see existing fields before adding new ones to avoid duplicates.
+
+### Participants
+
+| Command | What it does |
+|---------|-------------|
 | `micepad pax list` | List participants (supports filters) |
 | `micepad pax show ID` | Show participant details |
-| `micepad pax add` | Add a participant (interactive) |
+| `micepad pax add` | Add participant (`--email`, `--first_name`, `--last_name`, `--company`, `--job_title`, `--reg-type`) |
+| `micepad pax update ID` | Update participant (`--group`, `--rsvp`, `--company`, etc.) |
 | `micepad pax checkin ID` | Check in a participant |
 | `micepad pax checkout ID` | Check out a participant |
-| `micepad pax count` | Count participants by status |
-| `micepad pax export` | Export participants to CSV |
-| `micepad pax import FILE` | Import from CSV/Excel |
-| `micepad checkins stats` | Check-in statistics with velocity |
-| `micepad checkins stats --watch` | Live-refresh stats (2s interval) |
-| `micepad checkins recent` | Recent check-in activity |
-| `micepad campaigns list` | List campaigns |
-| `micepad campaigns create` | Create a campaign |
-| `micepad campaigns show ID` | Campaign details |
-| `micepad campaigns send ID` | Send a campaign |
-| `micepad campaigns cancel ID` | Cancel scheduled campaign |
-| `micepad campaigns stats ID` | Delivery statistics |
-| `micepad templates list` | List templates |
-| `micepad groups list` | List groups |
-| `micepad groups show NAME` | Group details with RSVP breakdown |
-| `micepad admin dashboard` | Platform stats (super admin) |
-| `micepad admin accounts` | List accounts (super admin) |
-| `micepad admin users` | List users (super admin) |
-| `micepad admin gatherings` | List gatherings (super admin) |
-| `micepad admin subscriptions` | List subscriptions (super admin) |
-| `micepad terminal tree` | Show full command tree |
+| `micepad pax count` | Count participants (`--by group`, `--by rsvp`, `--by checkin`) |
+| `micepad pax export` | Export participants (`--all`, `--group`, `--status`, `--fields`, `--format csv/xlsx`, `--output FILE`) |
 
-## Participant Identifiers
+**Participant identifiers** — commands accept multiple formats:
+- Prefix ID: `pax_abc123`
+- Email: `john@example.com`
+- Registration code or QR code value
 
-Commands that accept a participant ID support multiple formats:
+### Importing Participants
 
-- **Prefix ID**: `pax_abc123`
-- **Email**: `john@example.com`
-- **Code**: the participant's registration code
-- **QR Code**: the participant's QR code value
+Import is a multi-step wizard. Follow this order:
 
 ```bash
-micepad pax show pax_abc123
-micepad pax show john@example.com
-micepad pax checkin pax_abc123
+# 1. Get the sandboxed storage path
+micepad pax import --storage-path
+
+# 2. Copy file to storage (CLI sandboxes file access)
+cp attendees.xlsx $(micepad pax import --storage-path)/
+
+# 3. Start import — interactive wizard
+micepad pax import attendees.xlsx
+
+# Or with options:
+micepad pax import attendees.xlsx --group "Speakers" --action add --yes
+micepad pax import attendees.xlsx --dry-run
+```
+
+**Advanced import workflow** (for agents automating imports):
+
+```bash
+micepad pax import upload speakers.csv --group "Session Speakers"
+micepad pax import mappings              # Review column mappings
+micepad pax import add-field "Talk Title" short_text  # Create custom field from column
+micepad pax import map 6 talk_title      # Map column 6 to the new field
+micepad pax import validate              # Check for errors
+micepad pax import start --yes           # Execute import
+```
+
+### Badges
+
+| Command | What it does |
+|---------|-------------|
+| `micepad badges list` | List badge templates |
+| `micepad badges create` | Create template (`--name`, `--size 101x76`, `--orientation portrait`, `--layout single_sided/double_sided`, `--groups "Group1,Group2"`) |
+| `micepad badges show ID` | Show badge template with fields |
+| `micepad badges add-field ID` | Add field (`--type`, `--font_size`, `--align`, `--bold`, `--color`, `--page 2`) |
+
+**Badge field types**: `full_name`, `text`, `question` (for custom form fields: `--question company`), `qr_code`
+
+**Typical badge structure**:
+
+```bash
+micepad badges create --name "Speaker Badge" --size 101x76 --orientation portrait --layout double_sided --groups "Speakers"
+micepad badges add-field 1 --type full_name --font_size 26 --align center --bold
+micepad badges add-field 1 --type text --label "Speaker" --font_size 14 --align center --color "#7C3AED" --bold
+micepad badges add-field 1 --type question --question company --font_size 14 --align center
+micepad badges add-field 1 --type qr_code
+```
+
+### Campaigns
+
+| Command | What it does |
+|---------|-------------|
+| `micepad campaigns list` | List campaigns (`--type email`) |
+| `micepad campaigns create` | Create campaign (`--type email`, `--name`) |
+| `micepad campaigns show ID` | Campaign details |
+| `micepad campaigns update ID` | Update campaign (`--subject`) |
+| `micepad campaigns add-section ID` | Add content section (`--type`, `--content`) |
+| `micepad campaigns sections ID` | List all sections |
+| `micepad campaigns add-recipients ID` | Add recipients (`--status confirmed`, `--group "Speakers"`) |
+| `micepad campaigns send ID` | Send campaign (confirm with user first!) |
+| `micepad campaigns cancel ID` | Cancel scheduled campaign |
+| `micepad campaigns stats ID` | Delivery statistics (`--watch` for real-time) |
+
+**Campaign section types**:
+- `banner` — event banner image
+- `content` — markdown text (supports Liquid: `{{ guest.first_name }}`, `{{ event.pax_count }}`)
+- `qr_code` — participant's check-in QR code
+- `cta` — call-to-action button (`--button_text`, `--button_url`)
+- `event` — event details block (name, date, venue)
+
+**Building a campaign**:
+
+```bash
+micepad campaigns create --type email --name "Event Guide"
+micepad campaigns add-section cmp_xxx --type banner
+micepad campaigns add-section cmp_xxx --type content --content "# Hello {{ guest.first_name }}!\n\nYour event guide is here."
+micepad campaigns add-section cmp_xxx --type qr_code
+micepad campaigns add-section cmp_xxx --type cta --button_text "View Schedule" --button_url "https://example.com/schedule"
+micepad campaigns update cmp_xxx --subject "Your Event Guide"
+micepad campaigns add-recipients cmp_xxx --status confirmed
+micepad campaigns show cmp_xxx
+```
+
+### Check-in Operations
+
+| Command | What it does |
+|---------|-------------|
+| `micepad checkins stats` | Check-in statistics with velocity |
+| `micepad checkins stats --watch` | Live-refresh stats (2s interval) |
+| `micepad checkins recent` | Recent check-in activity (`--watch`, `--limit`) |
+| `micepad checkins add-staff` | Add check-in staff (`--email`, `--name`) |
+| `micepad checkins remove-staff EMAIL` | Remove staff member |
+| `micepad checkins staff` | List check-in staff |
+| `micepad checkins staff-activity` | Staff performance (who processed most check-ins) |
+
+### QR Login Tokens (Kiosks)
+
+| Command | What it does |
+|---------|-------------|
+| `micepad qrlogin generate` | Create kiosk token (`--name`, `--hours 48`, `--max_uses`) |
+| `micepad qrlogin list` | List active tokens |
+| `micepad qrlogin revoke ID` | Revoke a token |
+
+### Admin (super admin only)
+
+| Command | What it does |
+|---------|-------------|
+| `micepad admin dashboard` | Platform stats |
+| `micepad admin accounts` | List accounts (`--search`) |
+| `micepad admin users` | List users |
+| `micepad admin gatherings` | List gatherings (`--status`, `--limit`) |
+| `micepad admin subscriptions` | List subscriptions |
+
+## Event Lifecycle — The 6 Acts
+
+When setting up and running a full event, follow this sequence. Each act builds on the previous.
+
+### Act 1: Foundation Setup
+Account selection → event creation → groups (badge categories) → registration types (ticket tiers)
+
+```bash
+micepad accounts use "My Organization"
+micepad events create --name "Conference 2026" --slug conf-2026 --format in_person --start "2026-09-23 08:00" --end "2026-09-24 18:00" --venue "Convention Center"
+micepad groups create --name "Speakers" --color purple
+micepad groups create --name "Sponsors" --color amber
+micepad groups create --name "Attendees" --color blue
+micepad regtypes create --name "Early Bird" --capacity 300
+micepad regtypes create --name "General Admission" --capacity 600 --default
+micepad regtypes create --name "Speaker" --capacity 35
+```
+
+### Act 2: Registration Forms
+Build form fields → configure settings → publish → share URL
+
+```bash
+micepad forms list                           # Find default form ID
+micepad forms fields frm_xxx                 # Check existing fields
+micepad forms add-field frm_xxx --type company --label "Company" --required
+micepad forms add-field frm_xxx --type dropdown --label "Dietary Requirements"
+micepad forms update-field frm_xxx dietary_requirements --options "None,Vegetarian,Vegan,Halal,Kosher,Gluten-free"
+micepad forms update frm_xxx --title "Conference Registration" --submit_label "Register Now"
+micepad forms publish frm_xxx
+micepad forms url frm_xxx
+```
+
+### Act 3: Speakers & Participants
+Manual entry for VIPs → bulk import for speakers/sponsors/attendees → progress tracking
+
+```bash
+# Individual VIP
+micepad pax add --email speaker@example.com --first_name Jane --last_name Doe --company Acme --job_title "CTO"
+micepad pax update speaker@example.com --group "Speakers" --rsvp confirmed
+
+# Bulk import
+cp speakers.xlsx $(micepad pax import --storage-path)/
+micepad pax import speakers.xlsx --group "Speakers"
+
+# Progress check
+micepad events stats
+micepad pax count --by group
+micepad pax count --by rsvp
+```
+
+### Act 4: Badges, Kiosks & Communications
+Badge templates per group → check-in staff → QR kiosk tokens → pre-event emails
+
+```bash
+# Badge template
+micepad badges create --name "Speaker Badge" --size 101x76 --orientation portrait --layout double_sided --groups "Speakers"
+micepad badges add-field 1 --type full_name --font_size 26 --align center --bold
+micepad badges add-field 1 --type qr_code
+
+# Check-in infrastructure
+micepad checkins add-staff --email jake@example.com --name "Jake Torres"
+micepad qrlogin generate --name "Main Lobby Kiosk" --hours 48
+micepad qrlogin generate --name "Speaker Entrance" --hours 48 --max_uses 50
+
+# Pre-event email
+micepad campaigns create --type email --name "Event Guide"
+micepad campaigns add-section cmp_xxx --type content --content "# See you tomorrow, {{ guest.first_name }}!"
+micepad campaigns add-section cmp_xxx --type qr_code
+micepad campaigns update cmp_xxx --subject "Your Event Guide"
+micepad campaigns add-recipients cmp_xxx --status confirmed
+```
+
+### Act 5: Conference Day
+Live check-in monitoring → handle walk-ins → troubleshoot → export catering data
+
+```bash
+micepad checkins stats --watch          # Live dashboard
+micepad pax checkin speaker@example.com # Manual VIP check-in
+micepad checkins recent --watch         # Activity feed
+micepad pax count --by checkin          # Headcount
+micepad checkins staff-activity         # Staff performance
+
+# Walk-in handling
+micepad pax add --email walkin@example.com --first_name Sam --last_name Austin
+micepad pax update walkin@example.com --group Attendees --rsvp confirmed
+micepad pax checkin walkin@example.com
+```
+
+### Act 6: Post-Conference
+Thank-you email → data exports → security cleanup
+
+```bash
+# Thank-you campaign
+micepad campaigns create --type email --name "Thank You"
+micepad campaigns add-section cmp_xxx --type content --content "# Thank you, {{ guest.first_name }}!"
+micepad campaigns add-section cmp_xxx --type cta --button_text "Take the Survey" --button_url "https://example.com/feedback"
+micepad campaigns add-recipients cmp_xxx --status confirmed
+
+# Exports
+micepad pax export --all --format xlsx --output conference-final.xlsx
+micepad pax export --group "Speakers" --format csv --output speakers.csv
+
+# Security cleanup
+micepad qrlogin list
+micepad qrlogin revoke qr_xxx
+micepad checkins remove-staff vol1@example.com
+micepad forms unpublish frm_xxx
 ```
 
 ## Filtering Participants
@@ -120,113 +392,9 @@ micepad pax checkin pax_abc123
 micepad pax list --status confirmed
 micepad pax list --checkin checked_in
 micepad pax list --checkin not_checked_in
-micepad pax list --group "VIP"
-micepad pax list --search "john"
+micepad pax list --group "Speakers"
+micepad pax list --search "shopify"
 micepad pax list --status confirmed --checkin not_checked_in --limit 100
-```
-
-## Importing Participants
-
-Import is a multi-step process. Follow this order:
-
-```bash
-# 1. Check the storage path (files must be placed here first)
-micepad pax import --storage-path
-
-# 2. Download a template (optional)
-micepad pax import --template
-micepad pax import --template --format xlsx
-
-# 3. Copy the file to storage
-cp attendees.csv $(micepad pax import --storage-path)/
-
-# 4. Run import (interactive by default — prompts for group, mappings)
-micepad pax import attendees.csv
-
-# 5. Or run with options
-micepad pax import attendees.csv --group "VIP" --action add --yes
-micepad pax import attendees.csv --dry-run
-micepad pax import attendees.csv --errors-out errors.csv
-```
-
-**Important:** The CLI sandboxes file access. Files must be in the storage directory before import. Always copy files there first.
-
-## Campaign Workflows
-
-```bash
-# List email campaigns
-micepad campaigns list --type email
-
-# Create from template
-micepad campaigns create --type email --name "Welcome" --template tpl_xxxxx
-
-# Send (ALWAYS confirm with user first)
-micepad campaigns send cmp_xxxxx
-
-# Monitor delivery in real-time
-micepad campaigns stats cmp_xxxxx --watch
-```
-
-## Common Workflows
-
-### Event Day Operations
-
-```bash
-# Set the event context
-micepad events use my-conference-2025
-
-# Monitor check-ins live
-micepad checkins stats --watch
-
-# Quick check-in by scanning/email
-micepad pax checkin john@example.com
-
-# See recent activity
-micepad checkins recent
-
-# Get a headcount
-micepad pax count
-```
-
-### Pre-Event Preparation
-
-```bash
-# Review event details
-micepad events current
-micepad events stats
-
-# Import attendee list
-cp registrations.csv $(micepad pax import --storage-path)/
-micepad pax import registrations.csv --dry-run
-micepad pax import registrations.csv --group "General" --action add
-
-# Send confirmation emails
-micepad campaigns create --type email --name "Confirmation" --template tpl_xxxxx
-micepad campaigns send cmp_xxxxx
-```
-
-### Reporting
-
-```bash
-# Export all participants
-micepad pax export
-
-# Check-in stats
-micepad checkins stats
-
-# Campaign delivery stats
-micepad campaigns stats cmp_xxxxx
-
-# Group breakdown
-micepad groups show "VIP"
-```
-
-### Admin Operations (super admin only)
-
-```bash
-micepad admin dashboard
-micepad admin accounts --search "acme"
-micepad admin gatherings --status published --limit 50
 ```
 
 ## Configuration
@@ -242,5 +410,8 @@ export MICEPAD_URL="ws://localhost:3000/terminal"        # Local dev
 
 - **Authentication errors**: Run `micepad login` to re-authenticate
 - **No active event**: Run `micepad events use SLUG` to set context
-- **File not found on import**: Ensure file is copied to the storage directory first
+- **File not found on import**: Ensure file is copied to the storage directory first (`micepad pax import --storage-path`)
 - **Permission denied**: Some commands (admin) require super admin access
+- **Team member limit**: Free plans limit staff count. Check plan limits before bulk-adding staff.
+- **Duplicate fields on forms**: Always `forms fields` first. Fields bound to participant columns (company_name, job_title) should be unhidden, not duplicated.
+- **`--watch` mode**: Runs continuously. Use briefly for verification, then Ctrl+C to proceed.
