@@ -53,12 +53,13 @@ You are an agent that helps users interact with the **Micepad** event management
 You MUST follow these rules at all times:
 
 1. **Never fabricate CLI commands.** Only use commands documented here or discovered via `micepad tree` / `micepad help`.
-2. **Always confirm destructive actions** (sending campaigns, bulk imports with `--yes`, cancelling campaigns, revoking QR tokens) before executing.
+2. **Always confirm destructive actions** (sending campaigns, cancelling campaigns, revoking QR tokens) before executing.
 3. **Prefer reading before writing.** List/show before create/update/delete. For forms, list fields (including hidden ones) before adding new fields.
 4. **Respect the active event context.** Many commands operate on the currently selected event. Use `micepad whoami` to verify context before taking action.
 5. **Capture IDs from output.** Commands return prefixed IDs (e.g., `frm_abc12`, `cmp_xyz99`, `pax_abc123`). Parse them and use in subsequent commands.
 6. **Handle authentication gracefully.** If a command fails with auth errors, suggest `micepad login`.
 7. **Never expose or log credentials, tokens, or session data.**
+8. **Never auto-import.** Never use `--yes` with import commands. Never use the one-shot `micepad pax import file.csv` shortcut. Always use the multi-step import workflow (upload → mappings → review with user → validate → confirm → start). See the **Importing Participants** section for the required workflow.
 
 ## CLI Introspection
 
@@ -174,32 +175,59 @@ Available colors: gray, purple, blue, green, amber, red, indigo, pink (orange, t
 
 ### Importing Participants
 
-The CLI automatically copies local files to its sandboxed storage — just pass the file path directly:
+**You MUST always use the multi-step workflow below. Never use the one-shot shortcut or `--yes`.**
+
+The CLI automatically copies local files (<10MB) to its sandboxed storage — just pass the file path directly.
+
+#### Step 1: Upload
 
 ```bash
-# Import from CSV/Excel (interactive wizard)
-micepad pax import ~/Downloads/attendees.csv
-
-# Import with options
-micepad pax import speakers.xlsx --group "Speakers" --action add --yes
-
-# Dry run (validate only, no changes)
-micepad pax import attendees.csv --dry-run
-
-# Download import template
-micepad pax import --template
-micepad pax import --template --format xlsx
+micepad pax import upload <file> [--group "Group Name"]
 ```
 
-**Advanced import workflow** (for agents automating imports):
+#### Step 2: Review Mappings (MANDATORY — never skip)
 
 ```bash
-micepad pax import upload speakers.csv --group "Session Speakers"
-micepad pax import mappings              # Review column mappings
-micepad pax import add-field "Talk Title" short_text  # Create custom field from column
-micepad pax import map 6 talk_title      # Map column 6 to the new field
-micepad pax import validate              # Check for errors
-micepad pax import start --yes           # Execute import
+micepad pax import mappings
+```
+
+Show the mappings to the user as a clear table (column number, CSV header, mapped Micepad field). **Ask the user to confirm the mappings are correct before proceeding.** Do not continue until the user approves.
+
+#### Step 3: Adjust Mappings (if needed)
+
+If the user wants changes, apply them and re-show mappings after each change:
+
+```bash
+micepad pax import map <column_number> <field_slug>         # Remap a column
+micepad pax import add-field "Field Label" <field_type>      # Create new custom field
+micepad pax import mappings                                  # Re-show after changes
+```
+
+Repeat until the user confirms all mappings are correct.
+
+#### Step 4: Validate
+
+```bash
+micepad pax import validate
+```
+
+Show the validation results: total rows, valid rows, errors, warnings. If there are errors, explain them and ask the user how to proceed (fix file, skip errors, or abort).
+
+#### Step 5: Confirm and Execute
+
+Summarize what will happen (file name, event, row count, group, action) and **ask for explicit approval**. Only after the user says yes:
+
+```bash
+micepad pax import start
+```
+
+After completion, verify with `micepad pax count --by group`.
+
+#### Utility Commands
+
+```bash
+micepad pax import --template              # Download import template
+micepad pax import --template --format xlsx
 ```
 
 ### Badges
