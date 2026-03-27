@@ -4,13 +4,13 @@ description: >
   Interact with the Micepad event management platform via the Micepad CLI.
   Use for ANY Micepad question or action: managing events, participants,
   check-ins, campaigns, groups, registration types, forms, badges, QR kiosks,
-  sessions, and admin operations. Full CLI coverage for the complete event
+  sessions, and imports/exports. Full CLI coverage for the complete event
   lifecycle — from creating the event to post-conference cleanup.
 license: MIT
 compatibility: Requires the Micepad CLI binary (`micepad`) installed and authenticated.
 metadata:
   author: Micepad Team
-  version: 0.2.0
+  version: 0.3.0
   homepage: https://github.com/micepadteam/skills
 invocable: true
 argument-hint: "[action] [args...]"
@@ -29,6 +29,7 @@ triggers:
   - kiosk
   - qr login
   - group
+  - tag
   - import
   - export
   - micepad event
@@ -51,7 +52,7 @@ You are an agent that helps users interact with the **Micepad** event management
 
 You MUST follow these rules at all times:
 
-1. **Never fabricate CLI commands.** Only use commands documented here or discovered via `micepad terminal tree` / `micepad help`.
+1. **Never fabricate CLI commands.** Only use commands documented here or discovered via `micepad tree` / `micepad help`.
 2. **Always confirm destructive actions** (sending campaigns, bulk imports with `--yes`, cancelling campaigns, revoking QR tokens) before executing.
 3. **Prefer reading before writing.** List/show before create/update/delete. For forms, list fields (including hidden ones) before adding new fields.
 4. **Respect the active event context.** Many commands operate on the currently selected event. Use `micepad whoami` to verify context before taking action.
@@ -64,10 +65,10 @@ You MUST follow these rules at all times:
 When you encounter an unfamiliar command or need to verify syntax:
 
 ```bash
-micepad terminal tree    # Full command tree with all subcommands
-micepad help             # Top-level help
-micepad events help      # Subcommand-specific help
-micepad pax help         # Participant commands help
+micepad tree              # Full command tree with all subcommands
+micepad help              # Top-level help
+micepad events help       # Subcommand-specific help
+micepad pax help          # Participant commands help
 ```
 
 Always introspect before guessing. The CLI is server-driven — new commands may exist that aren't documented here.
@@ -77,10 +78,20 @@ Always introspect before guessing. The CLI is server-driven — new commands may
 Understanding how Micepad entities relate:
 
 - **Account** → owns multiple **Events** (called Gatherings internally)
-- **Event** → has **Groups** (badge categories), **Registration Types** (ticket tiers), **Forms**, **Participants**, **Campaigns**, **Badges**, **Sessions**
-- **Groups** = visual categories for badge colors and access levels (e.g., Speakers, Sponsors, Staff, Attendees). A participant belongs to one group.
-- **Registration Types** = ticket tiers with capacity limits (e.g., Early Bird, General Admission, Speaker). Separate from groups — a participant has both a group AND a reg type.
-- **Forms** = registration forms with configurable fields. Each event gets a default form. Forms have a lifecycle: draft → published → unpublished.
+- **Event** → has **Groups**, **Registration Types**, **Forms**, **Participants**, **Campaigns**, **Badges**, **Sessions**
+
+### Groups vs Registration Types
+
+These are two separate concepts — don't confuse them:
+
+- **Groups** = tags/labels for categorizing participants (e.g., Speakers, Sponsors, Staff, Attendees). Used for badge colors, access levels, and filtering. **A participant can belong to multiple groups.** Think of them as tags.
+- **Registration Types** = ticket tiers with capacity limits (e.g., Early Bird, General Admission, Speaker Pass). **A participant has exactly one registration type.** Think of them as the ticket they bought.
+
+A participant has both group(s) AND a registration type. Example: someone with a "General Admission" reg type can be in both the "Speakers" and "VIP" groups.
+
+### Other Entities
+
+- **Forms** = registration forms with configurable fields. Each event gets a default form. Lifecycle: draft → published → unpublished.
 - **Badges** = printable name badge templates linked to groups. Each badge template has ordered fields (full_name, company, QR code, custom text, etc.).
 - **Campaigns** = email or WhatsApp messages built from sections (banner, content, QR code, CTA, event details). Recipients are added by status, group, or individually.
 - **QR Login Tokens** = time-limited access tokens for check-in kiosks and roaming devices.
@@ -150,7 +161,7 @@ Available colors: gray, purple, blue, green, amber, red, indigo, pink (orange, t
 | `micepad pax list` | List participants (supports filters) |
 | `micepad pax show ID` | Show participant details |
 | `micepad pax add` | Add participant (`--email`, `--first_name`, `--last_name`, `--company`, `--job_title`, `--reg-type`) |
-| `micepad pax update ID` | Update participant (`--group`, `--rsvp`, `--company`, etc.) |
+| `micepad pax update ID` | Update participant (`--group`, `--rsvp`, `--company`, `--contact-phone`, etc.) |
 | `micepad pax checkin ID` | Check in a participant |
 | `micepad pax checkout ID` | Check out a participant |
 | `micepad pax count` | Count participants (`--by group`, `--by rsvp`, `--by checkin`) |
@@ -163,21 +174,21 @@ Available colors: gray, purple, blue, green, amber, red, indigo, pink (orange, t
 
 ### Importing Participants
 
-Import is a multi-step wizard. Follow this order:
+The CLI automatically copies local files to its sandboxed storage — just pass the file path directly:
 
 ```bash
-# 1. Get the sandboxed storage path
-micepad pax import --storage-path
+# Import from CSV/Excel (interactive wizard)
+micepad pax import ~/Downloads/attendees.csv
 
-# 2. Copy file to storage (CLI sandboxes file access)
-cp attendees.xlsx $(micepad pax import --storage-path)/
+# Import with options
+micepad pax import speakers.xlsx --group "Speakers" --action add --yes
 
-# 3. Start import — interactive wizard
-micepad pax import attendees.xlsx
+# Dry run (validate only, no changes)
+micepad pax import attendees.csv --dry-run
 
-# Or with options:
-micepad pax import attendees.xlsx --group "Speakers" --action add --yes
-micepad pax import attendees.xlsx --dry-run
+# Download import template
+micepad pax import --template
+micepad pax import --template --format xlsx
 ```
 
 **Advanced import workflow** (for agents automating imports):
@@ -267,16 +278,6 @@ micepad campaigns show cmp_xxx
 | `micepad qrlogin list` | List active tokens |
 | `micepad qrlogin revoke ID` | Revoke a token |
 
-### Admin (super admin only)
-
-| Command | What it does |
-|---------|-------------|
-| `micepad admin dashboard` | Platform stats |
-| `micepad admin accounts` | List accounts (`--search`) |
-| `micepad admin users` | List users |
-| `micepad admin gatherings` | List gatherings (`--status`, `--limit`) |
-| `micepad admin subscriptions` | List subscriptions |
-
 ## Event Lifecycle — The 6 Acts
 
 When setting up and running a full event, follow this sequence. Each act builds on the previous.
@@ -318,7 +319,6 @@ micepad pax add --email speaker@example.com --first_name Jane --last_name Doe --
 micepad pax update speaker@example.com --group "Speakers" --rsvp confirmed
 
 # Bulk import
-cp speakers.xlsx $(micepad pax import --storage-path)/
 micepad pax import speakers.xlsx --group "Speakers"
 
 # Progress check
@@ -402,16 +402,16 @@ micepad pax list --status confirmed --checkin not_checked_in --limit 100
 The CLI connects to `wss://studio.micepad.co/terminal` by default. Override with:
 
 ```bash
-export MICEPAD_URL="wss://studio.micepad.co/terminal"  # Production
-export MICEPAD_URL="ws://localhost:3000/terminal"        # Local dev
+micepad configure --url "wss://studio.micepad.co/terminal"  # Persistent
+export MICEPAD_URL="ws://localhost:3000/terminal"             # Local dev
 ```
 
 ## Error Handling
 
 - **Authentication errors**: Run `micepad login` to re-authenticate
 - **No active event**: Run `micepad events use SLUG` to set context
-- **File not found on import**: Ensure file is copied to the storage directory first (`micepad pax import --storage-path`)
-- **Permission denied**: Some commands (admin) require super admin access
+- **Permission denied**: Some commands require specific roles or plan levels
 - **Team member limit**: Free plans limit staff count. Check plan limits before bulk-adding staff.
 - **Duplicate fields on forms**: Always `forms fields` first. Fields bound to participant columns (company_name, job_title) should be unhidden, not duplicated.
 - **`--watch` mode**: Runs continuously. Use briefly for verification, then Ctrl+C to proceed.
+- **`--json` flag is broken**: Commands ignore `--json` and return table format. Do not rely on it for machine-readable output until fixed server-side.
