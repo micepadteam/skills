@@ -35,6 +35,35 @@ You are an agent that helps **Micepad super admins** manage the platform. This s
 
 This is a **private skill** — it requires super admin access. Regular event managers should use the `/micepad` skill instead.
 
+## CLI Conventions for List Commands
+
+All admin `list` commands follow a consistent set of flags:
+
+### Standard Flags (all admin list commands)
+
+| Flag | Purpose | Default |
+|------|---------|---------|
+| `--filter=FILTER` | Ransack filter for advanced queries (e.g. `name_cont=acme,status_eq=active`) | — |
+| `--limit=N` | Max rows to return | 20 |
+| `--page=N` | Page number for pagination | 1 |
+| `--json` | Output as JSON (currently broken — returns table format) | false |
+
+### Selective Flags
+
+| Flag | Available on | Purpose |
+|------|-------------|---------|
+| `--search=TEXT` | `admin users`, `admin accounts`, `admin gatherings` | Fuzzy search by name or email |
+| `--status=STATUS` | `admin gatherings` | Filter by event status |
+
+### Ransack Filter Syntax
+
+The `--filter` flag uses Ransack predicates. Common patterns:
+- `name_cont=acme` — name contains "acme"
+- `email_cont=example.com` — email contains domain
+- `status_eq=active` — exact match
+- `created_at_gteq=2026-01-01` — created on or after date
+- Combine with commas: `name_cont=acme,status_eq=active`
+
 ## Agent Invariants
 
 1. **Never fabricate CLI commands.** Only use commands documented here or discovered via `micepad tree`.
@@ -56,25 +85,31 @@ micepad admin dashboard    # Platform-wide statistics (users, DAU, MAU, events, 
 |---------|-------------|
 | `micepad admin accounts` | List all accounts |
 | `micepad admin accounts --search "acme"` | Search accounts by name |
+| `micepad admin accounts --filter "name_cont=acme"` | Ransack filter |
+| `micepad admin accounts --limit 50 --page 2` | Pagination |
 
 ### User Management
 
 | Command | What it does |
 |---------|-------------|
 | `micepad admin users` | List all users |
-| `micepad admin users --search "john"` | Search users |
-| `micepad admin users sessions USER_ID` | List login sessions (IP, device, location, timestamps) |
-| `micepad admin users sessions USER_ID --current` | Show active sessions only |
-| `micepad admin users sessions delete USER_ID SESSION_ID` | Force logout a specific session |
-| `micepad admin users sessions delete USER_ID --all` | Force logout all sessions for a user |
+| `micepad admin users --search "john"` | Search users by name or email |
+| `micepad admin users --filter "email_cont=example.com"` | Ransack filter |
+| `micepad admin users --limit 50 --page 2` | Pagination |
+| `micepad admin users sessions USER_ID` | List login sessions (IP, device, login time, last activity) |
+| `micepad admin users sessions USER_ID --current` | Show active sessions only (last 24h) |
+| `micepad admin users delete-session USER_ID SESSION_ID` | Force logout a specific session |
+| `micepad admin users delete-session USER_ID --all` | Force logout all sessions for a user |
 
 ### Gatherings (Events)
 
 | Command | What it does |
 |---------|-------------|
 | `micepad admin gatherings` | List all gatherings across accounts |
+| `micepad admin gatherings --search "summit"` | Search by event name |
 | `micepad admin gatherings --status published` | Filter by status |
-| `micepad admin gatherings --limit 50` | Limit results |
+| `micepad admin gatherings --filter "name_cont=summit"` | Ransack filter |
+| `micepad admin gatherings --limit 50 --page 2` | Pagination |
 
 ### Subscriptions
 
@@ -110,9 +145,9 @@ micepad admin emailcheck account           # Domain verification details
 
 ```bash
 micepad admin users sessions usr_RErUY              # All login sessions
-micepad admin users sessions usr_RErUY --current    # Active sessions only
-micepad admin users sessions delete usr_RErUY sess_abc12  # Force logout one session
-micepad admin users sessions delete usr_RErUY --all       # Force logout all sessions
+micepad admin users sessions usr_RErUY --current    # Active sessions only (last 24h)
+micepad admin users delete-session usr_RErUY ses_abc12  # Force logout one session
+micepad admin users delete-session usr_RErUY --all      # Force logout all sessions
 ```
 
 Output includes: session ID, IP address, device/user agent, location, login time, last activity.

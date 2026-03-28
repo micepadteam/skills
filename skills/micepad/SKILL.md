@@ -74,6 +74,43 @@ micepad pax help          # Participant commands help
 
 Always introspect before guessing. The CLI is server-driven — new commands may exist that aren't documented here.
 
+## CLI Conventions for List Commands
+
+All `list` commands follow a consistent set of flags. Know these conventions to avoid unnecessary `help` lookups:
+
+### Universal Flags (available on all list commands)
+
+| Flag | Purpose | Default |
+|------|---------|---------|
+| `--filter=FILTER` | Ransack filter for advanced queries (e.g. `name_cont=acme,created_at_gteq=2026-01-01`) | — |
+| `--limit=N` | Max rows to return | 50 (event-scoped), 20 (admin) |
+| `--page=N` | Page number for pagination | 1 |
+| `--json` | Output as JSON (currently broken — returns table format) | false |
+
+### Selective Flags (only on specific commands)
+
+| Flag | Available on | Purpose |
+|------|-------------|---------|
+| `--search=TEXT` | `pax list`, `events list` | Fuzzy search by name or email |
+| `--status=STATUS` | `pax list`, `forms list` | Filter by status enum |
+| `--checkin=STATUS` | `pax list` | Filter by check-in status (`checked_in`, `not_checked_in`, `checked_out`) |
+| `--group=NAME` | `pax list` | Filter by group name |
+| `--type=TYPE` | `campaigns list`, `forms list` | Filter by type (`email`/`whatsapp`, `registration`/`rsvp`/`ticket`) |
+| `--watch` | `checkins stats`, `checkins recent` | Live-refresh every 2s |
+
+### Ransack Filter Syntax
+
+The `--filter` flag uses Ransack predicates. Common patterns:
+- `name_cont=acme` — name contains "acme"
+- `status_eq=confirmed` — exact match
+- `created_at_gteq=2026-01-01` — created on or after date
+- Combine with commas: `name_cont=acme,status_eq=active`
+
+### Exceptions
+
+- `accounts list` (own accounts) — small list, only `--json` (no filtering needed)
+- `checkins staff-activity` — has `--limit`/`--page` only (aggregated data, no Ransack filter)
+
 ## Domain Model
 
 Understanding how Micepad entities relate:
