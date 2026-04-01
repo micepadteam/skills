@@ -10,50 +10,86 @@ After installation, use `/micepad` in your AI coding tool to manage events, part
 
 ```bash
 # Install the CLI
-curl -fsSL https://raw.githubusercontent.com/micepadteam/micepad-cli/master/scripts/install.sh | bash
+curl -fsSL https://github.com/micepadteam/micepad-cli/releases/latest/download/install.sh | bash
 micepad login
 
 # Install the skill
-npx skills add micepadteam/skills
-```
-
-Or install globally:
-
-```bash
 npx skills add micepadteam/skills -g
 ```
 
-### Manual Installation
+## Available Skills
 
-```bash
-git clone https://github.com/micepadteam/skills ~/.micepad-skills
-mkdir -p ~/.claude/skills
-ln -sfn ~/.micepad-skills/skills/micepad ~/.claude/skills/micepad
-```
+This repo contains two skills:
 
-For per-project installation, symlink into `.claude/skills/` in your project directory instead.
+| Skill | Who it's for | Invoke with |
+|-------|-------------|-------------|
+| **micepad** | Event managers | `/micepad` |
+| **micepad-admin** | Super admins only | `/micepad-admin` |
 
-## Usage
+### `/micepad` — Event Management
 
-Once installed, the skill activates automatically when you mention Micepad, events, participants, check-ins, or campaigns. You can also invoke it directly:
-
-```
-/micepad events list
-/micepad pax list --status confirmed
-/micepad checkins stats
-```
-
-### What You Can Do
+Full CLI coverage for the complete event lifecycle — from creating the event to post-conference cleanup.
 
 | Area | Examples |
 |------|----------|
 | **Events** | List events, set active event, view stats |
 | **Participants** | List, search, filter, add, check in/out, import, export |
 | **Check-ins** | Live stats, recent activity, velocity tracking |
-| **Campaigns** | Create, send, monitor delivery stats |
-| **Groups** | List groups, view RSVP breakdowns |
+| **Campaigns** | Create and send email/WhatsApp campaigns |
+| **Groups** | Manage groups, view RSVP breakdowns |
+| **Forms** | Build registration forms, manage fields |
+| **Badges** | Create badge templates, add fields |
+| **Sessions** | Manage event schedule and tracks |
 | **Templates** | Browse email and message templates |
-| **Admin** | Platform dashboard, account management (super admin) |
+
+### `/micepad-admin` — Platform Administration
+
+Platform-wide operations for Micepad super admins. Requires super admin access — regular event managers should use `/micepad` instead.
+
+| Area | Examples |
+|------|----------|
+| **Dashboard** | Platform-wide stats (users, DAU, MAU, events, revenue) |
+| **Accounts** | List and search all accounts |
+| **Users** | Manage users, audit login sessions, force logout |
+| **Gatherings** | Browse all events across accounts |
+| **Subscriptions** | View active subscriptions |
+| **Email Health** | Check deliverability, verify domain setup (SPF, DKIM, DMARC) |
+
+## Selective Installation
+
+Install only the skill you need:
+
+```bash
+# Event management skill only
+npx skills add micepadteam/skills -g -s micepad
+
+# Admin skill only (super admins)
+npx skills add micepadteam/skills -g -s micepad-admin
+
+# Both skills
+npx skills add micepadteam/skills -g
+```
+
+## Manual Installation
+
+```bash
+git clone https://github.com/micepadteam/skills ~/.micepad-skills
+mkdir -p ~/.claude/skills
+ln -sfn ~/.micepad-skills/skills/micepad ~/.claude/skills/micepad
+ln -sfn ~/.micepad-skills/skills/micepad-admin ~/.claude/skills/micepad-admin  # optional
+```
+
+## Update
+
+```bash
+npx skills update
+```
+
+Or update via the CLI:
+
+```bash
+micepad update  # updates both CLI binary and skills
+```
 
 ## Skills Standard
 
