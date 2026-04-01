@@ -11,7 +11,7 @@ Follow these steps to install the Micepad CLI and skill.
 ## Step 1: Install the Micepad CLI
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/micepadteam/micepad-cli/master/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/micepad/micepad-cli/master/scripts/install.sh | bash
 ```
 
 Verify installation:
@@ -35,13 +35,13 @@ micepad whoami
 ## Step 3: Install the Skill
 
 ```bash
-npx skills add micepadteam/skills
+npx skills add micepad/skills
 ```
 
 Or install globally (available in all projects):
 
 ```bash
-npx skills add micepadteam/skills -g
+npx skills add micepad/skills -g
 ```
 
 Verify:

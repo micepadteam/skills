@@ -6,15 +6,15 @@ After installation, use `/micepad` in your AI coding tool to manage events, part
 
 ## Install
 
-**Prerequisites:** [Micepad CLI](https://github.com/micepadteam/micepad-cli) installed and authenticated.
+**Prerequisites:** [Micepad CLI](https://github.com/micepad/micepad-cli) installed and authenticated.
 
 ```bash
 # Install the CLI
-curl -fsSL https://github.com/micepadteam/micepad-cli/releases/latest/download/install.sh | bash
+curl -fsSL https://github.com/micepad/micepad-cli/releases/latest/download/install.sh | bash
 micepad login
 
 # Install the skill
-npx skills add micepadteam/skills -g
+npx skills add micepad/skills -g
 ```
 
 ## Available Skills
@@ -61,19 +61,19 @@ Install only the skill you need:
 
 ```bash
 # Event management skill only
-npx skills add micepadteam/skills -g -s micepad
+npx skills add micepad/skills -g -s micepad
 
 # Admin skill only (super admins)
-npx skills add micepadteam/skills -g -s micepad-admin
+npx skills add micepad/skills -g -s micepad-admin
 
 # Both skills
-npx skills add micepadteam/skills -g
+npx skills add micepad/skills -g
 ```
 
 ## Manual Installation
 
 ```bash
-git clone https://github.com/micepadteam/skills ~/.micepad-skills
+git clone https://github.com/micepad/skills ~/.micepad-skills
 mkdir -p ~/.claude/skills
 ln -sfn ~/.micepad-skills/skills/micepad ~/.claude/skills/micepad
 ln -sfn ~/.micepad-skills/skills/micepad-admin ~/.claude/skills/micepad-admin  # optional

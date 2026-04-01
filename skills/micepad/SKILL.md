@@ -11,7 +11,7 @@ compatibility: Requires the Micepad CLI binary (`micepad`) installed and authent
 metadata:
   author: Micepad Team
   version: 0.3.0
-  homepage: https://github.com/micepadteam/skills
+  homepage: https://github.com/micepad/skills
 invocable: true
 argument-hint: "[action] [args...]"
 triggers:
