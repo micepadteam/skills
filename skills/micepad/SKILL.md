@@ -9,7 +9,7 @@ license: MIT
 compatibility: Requires the Micepad CLI binary (`micepad`) installed and authenticated.
 metadata:
   author: Micepad Team
-  version: 0.4.8
+  version: 0.4.9
   homepage: https://github.com/micepad/skills
 invocable: true
 argument-hint: "[action] [args...]"
@@ -62,6 +62,36 @@ You are an experienced event operations partner who manages events through the `
 5. **Capture IDs from output.** Commands return prefixed IDs (`frm_abc12`, `cmp_xyz99`, `pax_abc123`). Parse and reuse them.
 6. **Never expose credentials, tokens, or session data.**
 7. **Never auto-import.** No `--yes`, no one-shot import. Always the multi-step workflow. See **Importing Participants**.
+8. **Verify writes — error messages can lie.** Mutations (especially `forms add-field`) may print "An error occurred. Please try again." even when the write succeeded server-side. Never blindly retry a failed-looking mutation: re-read state first (e.g. `forms fields ID`), or you will create duplicate fields. *(Field note: Gale, 2026-07-05, CLI 0.4.9)*
+9. **Global flags go after the subcommand.** `micepad --account=X registration show` gets misparsed as `help`; use `micepad registration show --account=X` instead. Same for `--json`. *(Field note: Gale, 2026-07-05)*
+10. **Map source fields to existing Micepad fields first — reuse before you create.** When building a form from a source document, for each required field check whether it already maps to a field the form has (run `forms fields ID`): a default system field (`first_name`, `email`, `company_name`, `job_title`, `contact_phone`, …) or one already present. Reuse / unhide / repurpose that field instead of adding a parallel custom one. Adding a custom field that duplicates a native one leaves you with two fields for the same thing (one hidden, one visible), messy response columns, and locked-label confusion. Only add a custom field when no native field fits the semantics — and if the sole mismatch is a system field's **label** (which is locked by platform i18n, see Known Limitations), decide deliberately between accepting the native label and the hide-plus-custom workaround; don't reflexively spawn a custom field just because the source used different wording. *(Field note: Gale, 2026-07-06 — a form ended up with duplicate Title/Affiliation fields from skipping this check)*
+
+11. **Pace batch commands — the CLI is a persistent WebSocket, and a dropped connection lies to you.** Firing commands back-to-back in a loop reliably kills the session with `Error: read: websocket read: websocket: close 1006 (abnormal closure): unexpected EOF` — and every command *after* the drop returns a **plausible-looking domain error instead of a connection error** (e.g. `Group not found: Group 5B` for a group that demonstrably exists). Blindly trusting that output produces a completely wrong picture of server state. Therefore: **`sleep 3` between calls in any loop**, always `grep` the batch output for `close 1006` / `Error:` before believing a single line of it, and re-query anything that errored individually before concluding the data is bad. *(Field note: Gale, 2026-07-20, CLI 0.4.9 — a 10-group membership dump silently degraded into 6 fake "Group not found"s, then a later verification pass dropped exactly one group and made 10 correctly-assigned people look unassigned)*
+
+12. **Never infer a setting's meaning from its internal value — read the on-screen label.** Studio's form settings expose radio/checkbox values whose names actively mislead. Verified 2026-08-03 on `form[guest_creation_policy]`: `always_create` = **"Allow multiple registrations"** (a person can register more than once), `block_duplicate` = **"Block duplicates"** (prevent registration if already registered), and `prevent_duplicate` = **"Update existing registration"** — it *updates the existing record instead of creating a new one*, which is **not** "prevent duplicate submission" as the value name suggests. When reading settings out of the DOM, always capture the surrounding `<label>` / helper text alongside the value, never the value alone. *(Field note: Gale, 2026-08-03 — a client-facing doc shipped with `prevent_duplicate` described backwards until Gale challenged it)*
+
+13. **Build forms in one direction: labels → order → options → conditions → verify in a browser.** Every step after a label change is invalidated by it, because the variable name is re-slugged from the label and conditions bind to the variable (see Forms gotchas). And **the CLI cannot confirm that a form works** — `set-field-condition` reports success and reads back correctly for rules that never fire (see the option-ID warning under **Conditional display**). A form is only verified when a headless browser has toggled the source field and observed the target appear and disappear. *(Field note: Gale, 2026-08-14 — a 49-field form passed every CLI read-back with all 41 conditions dead)*
+
+## Known Limitations — Requires Studio UI
+
+The CLI cannot do everything. When you hit one of these, don't thrash — send the user to Studio (studio.micepad.co) with precise click instructions, then continue via CLI. *(All field-tested by Gale, 2026-07-05, CLI 0.4.9.)*
+
+| Task | Why the CLI can't | Workaround |
+|------|-------------------|------------|
+| Create a form | No `forms create` command — and new events may have **no default form at all** (`forms list` returns empty) | User creates the empty form in Studio; CLI then handles everything else (fields, options, order, publish) |
+| Delete a form | No `forms delete` command | Studio UI |
+| Paragraph field body text | Paragraph fields render **only** a rich-text block on the public form — their label and instruction are never displayed. The body is edited via Studio's WYSIWYG only | Add and position the paragraph field via CLI; user pastes the text in Studio |
+| Rename system field labels (`first_name`, `last_name`, `email`, `company_name`, `job_title`, `contact_phone`) | Labels are managed by platform i18n and localize per visitor language; `update-field --label` reports success but is a **silent no-op** — even for `company_name`/`job_title`, which `forms fields --json` reports as `locked: "-"` (the `locked` flag does **not** predict label mutability; verify on the public page, never trust the success line). **But `--placeholder` and `--instruction` on the very same fields DO take effect** (verified 2026-07-06). | Three tiers, cheapest first: (1) keep the native field and carry the desired wording in `--instruction`/`--placeholder` (CLI-only, no new field); (2) change the **Field Text** in Studio — **confirmed to work and override i18n even for `locked: "locked"` fields like `first_name`** (verified 2026-07-06); keeps the smart tag, so this is the preferred fix for a clean bilingual label; (3) only if a fully CLI-controlled label is required, hide the system field (`--visible false`) and add a custom field (this mints a **new smart tag** and leaves a hidden+visible pair — see Rule 10) |
+| Copy a form across events | Forms are event-scoped; `forms duplicate` cannot see forms from other events (`Form not found`) | Rebuild field-by-field via CLI |
+| Toggle the **"Open Event App"** button (shows on the registration success page **and** in the confirmation email) | **Correction (2026-08-03):** the success-page button is **form-level after all** — it's a checkbox `template[show_event_app_button]` on the **Success Message** template, inside the form's Messages tab. It is still unreachable from the CLI (no `forms messages` command — see the Messages row above), which is why the 2026-07-07 hunt through `events`/`registration`/`forms` update and both `--json` dumps came up empty and wrongly concluded "event-level". The confirmation-**email** button is separate. | Toggle it in Studio → form → **Messages → Success Message → "Show Event App button"**. If the button also needs to go from the confirmation email, clear that CTA in the **Emails** tab template. Disabling the event-level **Event App** module removes both at once. |
+| Delete **orphaned question columns** — questions no longer on any form but still showing in `pax export fields` / the participant data table (incl. leftover `zztest`-style junk and duplicate fields from a rebuilt form) | `forms remove-field` only targets a field **currently on a given form**; there is no event-level question-management command (`micepad tree` has no `questions` group, only `forms add-field`/`remove-field` and `pax import add-field`). Once a question is detached from the form it becomes an orphaned data column the CLI can't reach | Delete the question in Studio's registration/form **question manager** (questions with existing responses may be undeletable — clear/ignore them instead). *(Field note: Gale, 2026-07-07 — event 20201 had 39 export columns vs 16 live form fields; the extra ~20 were orphaned dupes + zztest junk)* |
+| Upload the event **Icon / Logo** (the avatar the card layout overlays on the top-left of the cover image) | The CLI only has `events banner` (the cover image); there is **no** icon/logo upload command. With neither uploaded, the registration/app card shows a generated placeholder avatar (blue square with the event-name initials) that reads as "whitespace/junk" over the banner's left edge | Upload Icon and/or Logo in Studio → **Brand Studio → Branding → Brand Elements** (the "Prefer logo over icon" toggle decides which one shows). The avatar slot is fixed by the layout — you can't remove it, only fill it. *(Field note: Gale, 2026-07-07 — event 20201's "banner left whitespace" was actually the empty logo placeholder, not a banner-ratio issue; recommended cover size is 1242×568)* |
+| **Read a custom question-field's answer values** (e.g. a `Grouping` column, internally `question_2140`) | No CLI path returns per-participant answers for custom question fields. `pax show` / `pax show --json` return only core fields (name, email, regtype, company, job title, phone) — never question columns. `pax export start` *lists* the question in its field picker (so you can confirm it exists) and the interactive picker can even be driven with `expect`, but the file it writes to the local path it prints is **0 bytes** — the real export is produced server-side and never lands locally. Net effect: custom-question answer data is unreachable from the CLI. | Export from Studio's participant table (tick the columns, download the xlsx), then diff locally. *(Field note: Gale, 2026-07-24 — needed the `Grouping` question values on event 20215 to diff against a source sheet; `pax show --json` omitted the column and `pax export start` wrote an empty file even when driven via expect, so the comparison had to use a Studio-exported xlsx)* |
+| **Read or edit a form's 8 state Messages** (the **Messages** tab: Success / Registration Closed / Capacity Full / Confirm / Confirmed / Already Confirmed / Decline / Declined Confirmation) | There is **no `forms messages` command** — `micepad tree` (server-driven) has no such subcommand, and `micepad forms messages ID` returns `Could not find command "messages"`. `forms settings --json` exposes only `Thank You Title`; `forms update --help` offers just title / subtitle / description / submit-label / status / opening-at / closing-at. Scraping the **public** form page is also a dead end: the messages are DB-backed and rendered one-at-a-time per state. Proof from the public bundle `controllers/message_preview_controller-*.js` — the admin UI POSTs `preview_type=<message_type>` to a CSRF-protected Studio endpoint, so the full set only exists behind an authenticated admin session. | Read/edit in Studio at `/{locale}/{account}/events/{event_id}/form_builder/forms/{form_id}/messages` — that **single page carries all 8 accordions in one DOM**, so an authenticated browser session can dump the lot in one fetch (form actions end `/messages/<type>`; fields are `template[title]`, `template[text_content]`, `template[button_link]`, plus per-type button-label fields). *(Field note: Gale, 2026-08-03 — event 20080 form 140)* |
+| **Set a field's Question Text** (the wording respondents actually read) | Studio's field editor has **two** inputs: **Label**, which drives the smart tag (the editor itself says *"Changing the label will also rename its smart tag"*), and **Question Text**, the respondent-facing wording. `update-field` exposes `--label`, `--placeholder`, `--instruction` — **nothing writes Question Text**. Question Text falls back to displaying the Label when empty, so a form built purely from the CLI *looks* right while its smart tags are unusable. Note also that the smart tag is **not** the CLI's `variable`: the same field reads `field_2_2` in `forms fields` but `{{ field22 }}` in Studio. | **Put English in the Label** (so the smart tag is referenceable from Email templates and `badges add-field --question <variable_name>`) and add localised wording as **Question Text in Studio**. Bulk-create in the CLI, then one Studio pass for the questions. *(Field note: Gale, 2026-08-14 — a 49-field Chinese form produced smart tags `field13`…`field22`, none usable from Email or Badge)* |
+| **Change the registration open/close date** | `micepad registration update`'s own help *Examples* list `--open_date` / `--open_time` / `--close_date` / `--close_time`, but those flags are **not in its Options block and do not exist** — both hyphen and underscore spellings fail with `ERROR: "micepad registration update" was called with arguments [...]`. `forms update --opening-at` is also constrained: it rejects any time before the master registration period with `Open time cannot be before the registration period start`. | Studio → Registration → Details. *(Field note: Gale, 2026-08-14 — blocked a browser verification pass entirely)* |
+| **Export a form's answers when two questions share a label** | Studio's export (even with **select all**) **silently collapses same-named questions to one column and keeps the oldest — which is the deleted one** — so the live question's answers never reach the file. No warning; the column is present and empty, indistinguishable from "nobody answered". Verified 2026-08-14 on event 20269: CLI listed 57 question columns, the XLSX had 50, and two genuinely-submitted phone numbers were absent. `pax show --json` still returns core fields only, so the CLI is no help either. | Read answers from the **attendee detail page** `/{locale}/{account}/events/{event_id}/attendees/{participant_id}` — it lists every question **without de-duplicating**, printing both same-named columns with the live one last. That is currently the only complete source. Longer term, delete the orphan questions in Studio so the collision stops happening. |
+| **Remove a participant from a single group** (e.g. clearing a stale group after re-grouping) | Group assignment is additive: `pax update`/`pax batch --group` only **add** a group, and there is no `remove-from-group` / per-group detach command anywhere in `micepad tree`. Once added, a group can't be taken off via CLI. (Regtype is exclusive so `--reg-type` replaces cleanly — this gap is groups-only.) A **feature gap worth closing upstream: keep `--group` additive (that behaviour is genuinely useful for multi-group members) AND add a matching detach — a `pax remove-from-group` / `pax update --remove-group` — so add and remove both exist. The fix is a new remove path, not turning `--group` into a replace.** | Remove the participant from the group in Studio's participant/group view. *(Field note: Gale, 2026-07-23 — re-grouping 3 speakers to new groups left their old groups attached; verified `--group` is add-only, `{5B}` + add `4A` → `{4A,5B}`)* |
 
 ## Assess Before You Act
 
@@ -101,7 +131,10 @@ A participant has both. Example: "General Admission" reg type + "Speakers" and "
 
 ### Other Entities
 
-- **Forms** — registration forms with fields. Lifecycle: draft → published → unpublished.
+- **Forms** — two types (*added by Gale, 2026-07-05*):
+  - `registration` — public self-signup. Anyone with the link fills in the fields; each submission **creates a new participant**. For open events.
+  - `rsvp` — invited guests from a pre-loaded list respond attend/decline; submissions **update existing participants' RSVP status** (`confirmed` / `unconfirmed` / `declined` / `waitlisted` / `pending_approval`), no new participants created. For invite-only events, usually paired with an invitation campaign.
+  - Lifecycle for both: draft → published → unpublished. **Draft forms render nothing at their public URL** — publish before verifying visually.
 - **Badges** — printable name badge templates linked to groups. Ordered fields.
 - **Campaigns** — email/WhatsApp messages built from sections. Recipients by status, group, or individual.
 - **QR Login Tokens** — time-limited kiosk/device access.
@@ -210,6 +243,8 @@ micepad forms unpublish frm_xxx                 # Close registration
 | `micepad events list` / `use SLUG` / `current` / `stats` | Event context |
 | `micepad events create` | `--name`, `--slug`, `--format`, `--start`, `--end`, `--venue`, `--description` |
 
+**`--account` takes the account *name*, not the ID — despite the help text saying "by name or ID".** Passing the numeric ID (`--account=90001`) fails with `Account not found`, and the error then lists that very account under *Available accounts* with its ID beside it. Pass the name exactly as `accounts list` prints it, quoted (`--account="Acme Demo Org"`); non-ASCII names work. Cross-account work is otherwise invisible: an event that exists under another account simply does not appear in `events list`, and `events use ID` reports `Event not found` — so before concluding an event ID is wrong, sweep every account from `accounts list`. *(Field note: Gale, 2026-08-14 — an event ID that "did not exist" was sitting in a sibling account.)* Note this is **narrower than** the `admin suppressions list` failure logged 2026-08-10, where *both* the name and the ID were rejected; on ordinary commands the name form does work.
+
 ### Participants
 | Command | Purpose |
 |---------|---------|
@@ -228,29 +263,67 @@ micepad forms unpublish frm_xxx                 # Close registration
 |---------|---------|
 | `micepad groups list` / `create` / `show NAME` | `--name`, `--color` (gray/purple/blue/green/amber/red/indigo/pink) |
 | `micepad regtypes list` / `create` | `--name`, `--capacity`, `--default` |
+| `micepad pax batch --ids A,B,C` | Assign many participants at once: `--group`, `--reg-type`, or `--rsvp` (one target per call) |
+
+**Gotchas** *(field-tested by Gale, 2026-07-20, CLI 0.4.9)*:
+- **`--group` matches the group name byte-for-byte, and real-world group names carry stray whitespace.** Groups created via Studio/import often keep a **trailing space** (`"Group 1A "`), and it is frequently **inconsistent within the same event** — one event had `Group 1A `…`Group 4A ` with a trailing space but `Group 5A`, `Group 1B`…`Group 5B` without. `groups list`'s padded table **cannot** show you this. Always resolve exact names from **`groups list --json`** and pass the string verbatim; otherwise you get `Group not found` for a group that exists (and see Rule 11 — that same message is also what a dead connection returns, so the two failure modes are indistinguishable by text alone).
+- **The `GROUP` column in `pax list` / `pax show` is the Registration Type, not the group.** It renders `學員` / `講師` (regtype names) even for participants who are in several groups, and it does not change when you assign a group. **The only reliable way to read group membership is `pax list --group "<exact name>"`** (per group), or `pax count --by group` for totals. Never verify a group assignment with `pax show`.
+- `pax count --by group`'s `Total:` line is the **event's total participant count**, not the sum of the rows above it — rows won't add up to it when people have no group or multiple groups. Don't read it as a checksum.
+- **Group assignment is additive, not a replace — and there is no way to remove one group via the CLI.** `pax batch --ids A,B,C --group X` assigns many participants in one call (each call targets a single group/reg-type/rsvp); `pax update <id> --group X` does one participant. Both **add** the named group and **leave every existing group intact** — verified 2026-07-23: adding `4A` to a participant already in `5B` yielded `{4A, 5B}`, not `{4A}`. Consequences: (a) a multi-group member is built by **calling once per group**; (b) re-grouping someone leaves their **old group behind**, and since no command removes a participant from a single group (`pax update`/`batch` only add; there is no `remove-from-group`), **clearing a stale group is a Studio-only task** (see Known Limitations). Regtype is different — it's an exclusive field, so `--reg-type` genuinely replaces.
+
+### Master Registration Settings
+
+Forms live inside a master registration window — individual form open/close dates must fall within it. If signups aren't working, check this **before** debugging the form. *(Added by Gale, 2026-07-05.)*
+
+| Command | Purpose |
+|---------|---------|
+| `micepad registration show` | Status, channel, open/close dates, guest limit, page visibility |
+| `micepad registration update` | `--status open/closed`, `--guest-limit unlimited/limited`, `--max-guests N`, `--page-visibility show/hide`, `--open_date/--open_time/--close_date/--close_time` |
 
 ### Forms
 | Command | Purpose |
 |---------|---------|
-| `micepad forms list` / `fields ID` / `settings ID` | Inspect; `fields` includes conditional display summary |
+| `micepad forms list` / `show ID` / `fields ID` / `settings ID` / `responses ID` | Inspect; `fields` includes a conditional display summary |
+| `micepad forms field-types` | List all available field types |
 | `micepad forms add-field ID` | `--type`, `--label`, `--required` |
-| `micepad forms update-field ID SLUG` | `--options`, `--placeholder` |
-| `micepad forms field-conditions ID SLUG` | Inspect conditional display rules |
-| `micepad forms set-field-condition ID SLUG` | `--source`, `--operator`, `--value`, `--logic and/or`, `--append` |
-| `micepad forms clear-field-conditions ID SLUG` | Remove conditional display rules |
-| `micepad forms reorder ID` / `update ID` | `--title`, `--subtitle`, `--description`, `--submit_label` |
-| `micepad forms publish ID` / `unpublish ID` / `url ID` | Lifecycle |
+| `micepad forms update-field ID VARIABLE` | `--label`, `--required`, `--visible`, `--placeholder`, `--instruction`, `--options` (comma-separated, for dropdown/radio/checkbox) |
+| `micepad forms remove-field ID VARIABLE` | Remove a field |
+| `micepad forms move-field ID VARIABLE --position=N` / `reorder ID` | Ordering |
+| `micepad forms field-conditions ID VARIABLE` | Inspect conditional display rules |
+| `micepad forms set-field-condition ID VARIABLE` | `--source`, `--operator`, `--value`, `--logic and/or`, `--append` |
+| `micepad forms clear-field-conditions ID VARIABLE` | Remove conditional display rules |
+| `micepad forms update ID` | `--title`, `--subtitle`, `--description`, `--submit_label`, `--status`, `--opening_at`, `--closing_at` |
+| `micepad forms publish ID` / `unpublish ID` / `duplicate ID` / `url ID` | Lifecycle (duplicate is same-event only) |
 
-**Field types**: `company`, `job_title`, `country`, `dropdown`, `text`, `long_text`, `paragraph`
+**Field types** (39 as of CLI 0.4.9 — run `forms field-types` for the current list): identity (`first_name`, `last_name`, `full_name`, `email`, `phone`, `gender`, `date_of_birth`, `nationality`, `passport`), professional (`company`, `job_title`, `bio`, `headline`), inputs (`text`, `long_text`, `dropdown`, `radio`, `checkbox`, `number`, `date`, `time`, `country`, `address`, `url`, `file_upload`, `image`), needs (`dietary`, `accessibility`), consent (`consent`, `term_consent`, `captcha`), layout (`paragraph`, `divider`, `spacer`), social (`linkedin`, `twitter`, `instagram`, `facebook`, `youtube`). *(Expanded by Gale, 2026-07-05.)*
 
-**Conditional display**: Rules show/hide a target field based on an earlier visible answerable source field. Always run `forms fields` first to get field variables and ordering. Use `field-conditions` before changing existing logic. Examples:
+**Conditional display**: Rules show/hide a target field based on an earlier visible answerable source field. Always run `forms fields` first to get field variables and ordering. Use `field-conditions` before changing existing logic.
+
+> 🔴 **When the source is a radio/dropdown/checkbox, `--value` MUST be the numeric option ID, not the option text.** The CLI accepts the text, prints `Conditional display updated`, and `field-conditions` reads it back showing that text — **but the rendered form compares against the option ID, so the rule never matches and the target field never appears.** Silent failure: nothing in the CLI can reveal it. Verified 2026-08-14 (event 20269 / form 164) — 41 text-valued rules were all dead until re-written with IDs.
+>
+> **Option IDs are not exposed by the CLI** (`forms fields --json` returns neither option strings nor IDs). Publish the form, then scrape them from the public page DOM:
+>
+> ```bash
+> # radio:    <input type="radio" name="form_submission[values][field__1]" value="3874">
+> # dropdown: <option value="3881">其他</option>
+> ```
+>
+> Build a `{label: id}` map once and keep it beside your build script; re-scrape whenever options change. Setting conditions is therefore **not completable from the CLI alone**.
 
 ```bash
 micepad forms field-conditions frm_xxx dietary_notes
-micepad forms set-field-condition frm_xxx dietary_notes --source meal_preference --operator equals --value Vegetarian
-micepad forms set-field-condition frm_xxx passport_number --source nationality --operator in --value "Singapore,Malaysia" --logic or --append
+# ✅ select source → option ID (3874 = the "Vegetarian" option)
+micepad forms set-field-condition frm_xxx dietary_notes --source meal_preference --operator equals --value 3874
+# ❌ silently never fires:
+#   micepad forms set-field-condition frm_xxx dietary_notes --source meal_preference --operator equals --value Vegetarian
+# multi-value operators take a comma-list of option IDs, same rule
+micepad forms set-field-condition frm_xxx passport_number --source nationality --operator in --value "5120,5121" --logic or --append
+# text/number sources DO take literal values
+micepad forms set-field-condition frm_xxx notes --source employment_status --operator not_empty
 micepad forms clear-field-conditions frm_xxx dietary_notes
 ```
+
+**Two-layer conditions work** (a field whose own source is itself conditional): verified 2026-08-14 with `A → B → C`, each rule combined with `--logic and --append`. Always verify in a browser, never on the CLI read-back alone.
 
 Common operators:
 - Text: `equals`, `not_equals`, `empty`, `not_empty`, `contains`, `not_contains`, `starts_with`, `ends_with`
@@ -259,6 +332,20 @@ Common operators:
 - Number/date: `greater_than`, `less_than`, `between`, `not_between` (date also supports `before`, `after`)
 
 **Important**: Default forms have hidden fields (company_name, job_title). Always `forms fields` first — unhide rather than duplicate.
+
+**Gotchas** *(field-tested by Gale, 2026-07-05)*:
+- If a field label was ever used elsewhere, the platform may auto-suffix the new field ("Company **2**", variable `company_2`). Check the label after `add-field` and fix with `update-field --label`. **A deleted field keeps its label reserved** — delete `Kin 1 Phone` and re-create it with the same label and you get `Kin 1 Phone 2` (verified 2026-08-14). Renaming it back works, but that rewrites the variable (see below).
+- **New fields default to `visible: no`.** `add-field` has no `--visible` flag, so every added field needs a follow-up `update-field VARIABLE --visible true` or it never appears on the form. *(Gale, 2026-08-14)*
+- 🔴 **`update-field --label` rewrites the variable name, which silently breaks conditions bound to it.** The variable is a slug of the label, and **only ASCII survives** — `Need Family Registration` → `need_family_registration`, but `眷屬1-姓名` → `field_1_1` (collisions get numeric suffixes). Rename that field and the variable is regenerated, so any `set-field-condition` referencing it stops matching **with no warning**. Editing **Field Text in Studio does the same thing** — verified 2026-08-14: `company_name` → `field__11`, `contact_phone` → `field__12`, and a generic `date` field became native `date_of_birth`. **Order of operations: finalise every label first, set conditions last, then never rename anything.**
+- **`--type phone` overrides `--label` with the platform's i18n string.** `add-field --type phone --label "Kin 1 Phone"` shows as `Contact phone` in `forms fields` — five of them are indistinguishable. Oddly, `remove-field`'s confirmation prompt prints the *real* label, so the same field shows two different names across commands. Use `text` for non-primary phone fields. *(Gale, 2026-08-14)*
+- **Date fields render as two inputs**: `form_submission_values_<var>_display` (visible, carries `required`) and `form_submission_values_<var>_date` (hidden). Browser-automation checks that look up the bare id find nothing and mis-report the field as hidden. `--required` on a `date` field **is** properly enforced in the browser (verified 2026-08-14), same as text.
+- **`pax export`'s field list is in field-creation order, and `move-field` does not affect it.** The export column order has nothing to do with the form's display order, so **create fields in their final order** rather than reordering afterwards. **Deleted fields also stay in the export list forever** as orphan columns, which is how you get more export columns than form fields (verified 2026-08-14: 74 export columns vs 52 live fields). See the orphaned-columns row in Known Limitations.
+- `forms update --title` changes the **public** title; the internal form name shown in `forms list` stays unchanged (cosmetic, UI-only rename).
+- After any `add-field`/`update-field`, verify with `forms fields ID` — see Rule 8.
+- `forms remove-field ID VARIABLE` is **interactive** (`Remove "x"? (y/N)`). In a non-interactive shell it silently defaults to N — a no-op that still exits 0 (looks like success, changed nothing). Pipe the confirmation: `printf "y\n" | micepad forms remove-field ID var`. Locked system fields (`email`, `contact_phone`) and any field with existing responses cannot be removed.
+- The remove-field confirmation prompt can print a **neighboring field's label** when the target is a system-derived field (e.g. removing `job_title` shows the custom "Title / Position" field's label) — so blind confirmation risks the appearance of deleting the wrong field. The command still acts on the VARIABLE you named (for a plain user-created field the prompt is correct), but always re-read `forms fields ID` afterward to confirm only the intended field is gone. Prefer hiding system-derived fields (`job_title`, `company_name`) with `--visible false` rather than deleting them.
+- To verify **option text** (radio/dropdown/checkbox), `forms fields --json` is not enough — it does not return the option strings. (It *does* summarize conditional display; use `field-conditions` for the full rules.) Fetch the **published** public form instead: `curl -sL -A "Mozilla/5.0" "https://studio.micepad.co/events/<slug>/registration/<ID>"` (it 302-redirects to `micepad.co`; without `-L`/a User-Agent it returns an empty body). The option strings live in the page's SPA hydration blob and are greppable.
+- **Renaming the event silently breaks the live registration link.** The public form URL is `https://micepad.co/events/<event-slug>/registration/<form-ID>`, and the **event slug is auto-generated from the event NAME** — the form-ID tail (e.g. `/138`) is stable, but editing the event name regenerates the slug. The **old slug then 404s with no redirect** — anyone holding the previously-shared link (EDM, poster, QR, chat) hits a dead page. The *form* title (`forms update --title`) does NOT touch the URL; only the **event name** does. Once a registration link is distributed, treat the event name as frozen; if you must rename, re-issue the new URL everywhere and re-test for `200`. To restore an old link you'd have to rename the event back (which then kills the newer slug). *(Field note: Gale, 2026-07-08 — mRNA event 20201: adding "Taiwan" to the name flipped the slug `2026-mrna-research-day-…` → `2026-taiwan-mrna-research-day-…`; old link verified 404, new 200, form ID 138 unchanged throughout.)*
 
 ### Badges
 | Command | Purpose |
@@ -291,6 +378,43 @@ micepad badges add-field ID --type qr_code
 
 **Section types**: `banner`, `content` (Markdown + Liquid: `{{ guest.first_name }}`, `{{ event.pax_count }}`), `qr_code`, `cta` (`--button_text`, `--button_url`), `event`
 
+**`add-section --content -` (stdin) silently writes an empty section.** The command prints `Section added: content (pos N)` and exits 0, but the body is never stored — `campaigns sections ID --json` shows `"content_preview": "(empty)"` and `campaigns preview ID` renders a blank gap where the text should be. Passing the same text as an inline `--content "…"` string on `add-section` or `update-section` works. **Never trust the `Section added` line for content sections — always re-read `sections --json` and confirm `content_preview` is not `(empty)`.** *(Field note: Gale, 2026-08-14 — a full email body piped from a file was lost this way; only the `(empty)` preview caught it.)*
+
+**The banner section has no image parameter — it renders the event cover image.** There is no email-only image upload; `add-section --type banner` just reserves the slot, and the picture comes from `events banner FILE`. Uploading one therefore **also replaces the cover on the event page and guest portal** (`events banner` has no read/show counterpart, so you cannot check what is already there from the CLI — ask before overwriting). Same for `--type image`: neither `add-section` nor `update-section` accepts a URL or file.
+
+**`campaigns update --subject` also rewrites the campaign name.** The confirmation prints `Name:` followed by the new subject, and `campaigns list` / `show` then display the subject string as the campaign name. Set `--name` last if you need the two to differ.
+
+**`campaigns stats` is aggregate-only — for per-recipient delivery status use `admin emailcheck` (see below).** When `recipients` > `delivered` + `bounced`, the gap is almost always `delayed` (receiving MX soft-bounced, SES still retrying) and only the delivery log names those people. *(Field note: Gale, 2026-08-10 — a 94-recipient campaign showed 87 delivered / 1 bounced; the missing 6 were all `delayed` and still stuck 39 min after send.)*
+
+### Email Delivery Diagnostics (admin)
+
+Requires platform-admin rights. This is the CLI equivalent of Studio's `/admin/email_delivery_logs` — it answers "did person X actually receive it?", which `campaigns stats` cannot. *(Discovered and field-tested by Gale, 2026-08-10.)*
+
+| Command | Purpose |
+|---------|---------|
+| `micepad admin emailcheck list EMAIL` | **Every delivery record for one address** — `id`, `status`, `subject`, `from`, `sent_at`, `error`. `--json` works. The workhorse |
+| `micepad admin emailcheck status TRACKING_ID` | Status of one specific send |
+| `micepad admin emailcheck app` / `accounts` / `account ID` | Health checks / config audit |
+| `micepad admin emailcheck send` / `campaign CAMPAIGN_ID` | Send a test to yourself / admin |
+| `micepad admin emailcheck templates` | List system email templates |
+| `micepad admin suppressions list` | **Account-layer** suppressions, includes an `ACCOUNT` column |
+| `micepad admin suppressions global-list` | **Global** suppression pool (a *different, larger* list) |
+| `micepad admin suppressions check EMAIL` | Is this one address suppressed? |
+| `micepad admin suppressions global-add/global-remove EMAIL`, `add`, `remove`, `sync` | Mutations — **confirm with user first** |
+
+**Delivery status is a progression, and the log keeps only the latest**: `delayed` → `delivered` → `opened` → `clicked`, or `bounced`. So `campaigns stats`' `delivered` count equals **delivered + opened + clicked** rows in the log — don't compare the `delivered` bucket alone and conclude mail is missing.
+
+**Gotchas** *(all verified 2026-08-10, CLI 0.4.9)*:
+- **`pax list --json` TRUNCATES long emails** — a long address comes back as the literal string `firstname.lastname@averylongdomai...`, ellipsis and all, not just in the rendered table. Any lookup keyed on that value fails (`No delivery logs found`), and any "the email data looks clean" conclusion drawn from `pax list --json` is unsound. **Re-fetch full addresses with `pax show <id>`** before using them as keys.
+- **`admin suppressions list --account=X` is broken for every value** — both the account name (`--account="Acme Org"`) and the numeric ID (`--account=90001`) return `Account not found`, and the error message then *lists that very account* under "Available accounts". Tested with plain-ASCII account names too, so it is not a character-encoding issue. **Omit `--account`**: the bare command returns the platform-wide list with an `ACCOUNT` column you can filter yourself.
+- **`suppressions list` and `suppressions global-list` are two different lists**, not two views of one. An address bounced during a campaign can land in the global pool while the account-layer list stays empty. Query both before concluding an address is clean.
+- **`global-list` caps at 1000 rows per page.** Exactly 1000 back means truncation — paginate with `--page 2`. (`suppressions list` returns "No suppressed emails found." on an out-of-range page, so an empty page 2 is a real end-of-list, not an error.)
+- **Campaigns re-sent under the same name produce identical `subject` strings in the log.** Disambiguate rows by `sent_at`, never by subject — and use a **time window**, since the log timestamp lags the campaign's `sent_at` by 0–2 minutes.
+- The log JSON carries an `"error"` **field name** (usually `"-"`), so `grep -i error` yields a false positive on nearly every row. Inspect the value, not the keyword.
+- Sweeping many addresses is a batch loop — **Rule 11 applies** (`sleep 3` between calls, and run nothing else against the CLI concurrently; 94 lookups took ~5 min and stayed clean).
+
+**A campaign can be `sent` with 0 recipients.** Firing `campaigns send` before `add-recipients` silently succeeds and is recorded as `sent` with `recipients: 0` — nothing warns you. **Always check `campaigns show ID`'s recipient count before sending.**
+
 ### Check-ins & Kiosks
 | Command | Purpose |
 |---------|---------|
@@ -298,6 +422,43 @@ micepad badges add-field ID --type qr_code
 | `micepad checkins add-staff` / `remove-staff` / `staff` / `staff-activity` | Staff ops |
 | `micepad qrlogin generate` | `--name`, `--hours 48`, `--max_uses` |
 | `micepad qrlogin list` / `revoke ID` | Token management |
+
+### Sessions (agenda) & Session Check-in
+
+> 🔴 **`sessions create` produces sessions that Studio can never display — do not use it to build an agenda.** Studio's Schedule is a two-level `Day → Session` structure, and `sessions create` writes only the session's own `date` field without creating or attaching the parent **Day**. The session is real at the API layer (`sessions list` / `show` return it, check-in flags and all) but renders **nowhere** in Studio, so nobody can rename it, no one can see it, and it cannot be reached from the Schedule UI. Verified 2026-08-18 on event 20273: 5 sessions created via CLI stayed invisible; creating the `Day` in Studio afterwards did **not** adopt them (`day_id` stays null and is never backfilled); a *sixth* session created **while the Day already existed** was **also** invisible — so this is not a missing-prerequisite problem, the command simply never associates a Day. **There is no `days` command group in `micepad tree`** (only `tracks` and `locations`), so the association cannot be repaired from the CLI either.
+>
+> **Correct division of labour: create sessions in Studio (where you also type the name), then drive check-in from the CLI.**
+
+| Command | Purpose | Safe to use? |
+|---------|---------|--------------|
+| `micepad sessions list` / `show ID` | Inspect; both print `Check-in enabled` and `Check-in status` | ✅ |
+| `micepad sessions update ID` | `--checkin` / `--no-checkin`, `--checkin-status open\|closed`, `--start`, `--end`, `--date`, `--location`, `--track` | ✅ (except `--name`) |
+| `micepad sessions delete ID` | Interactive `(y/N)` — pipe `printf "y\n" |` in scripts | ✅ |
+| `micepad sessions create` | Creates an **orphaned, Studio-invisible** session | ❌ **use Studio** |
+
+**Session check-in** is Studio's *Edit a session → "Session check-in"* toggle ("Track attendance with QR code scanning at this session") plus the **Check-in Status** dropdown under it. On an **existing** (Studio-created) session both are fully CLI-controllable:
+
+```bash
+micepad sessions list                                        # read the real IDs
+micepad sessions update 40 --checkin --checkin-status open   # toggle ON + allow scanning
+micepad sessions update 40 --checkin-status closed           # stay ON, stop scanning
+micepad sessions update 40 --no-checkin                      # toggle OFF
+micepad sessions show 40                                     # verify both lines
+for i in 40 41 42; do micepad sessions update $i --checkin --checkin-status open; sleep 3; done
+```
+
+Only sessions with check-in **enabled** appear in Studio's **Onsite → Check-in → "Select Session"** dropdown, and the `(Open)`/`(Closed)` suffix there is the `--checkin-status` value.
+
+**Studio locations** (verified 2026-08-18): Schedule lives at `/{locale}/{account_id}/events/{event_id}/sessions` with tabs **Schedule / Days / Tracks / Locations** — there is **no "Content" nav group** in the current Studio; `/schedule`, `/agenda`, `/content/schedule` all 404. A Day must exist before Studio will let you add a session.
+
+**Gotchas** *(field-tested by Gale, 2026-08-18, CLI 0.4.9, events 20151 & 20273)*:
+- 🔴 **`--name` is a silent no-op on both `sessions create` and `sessions update`.** Every syntax fails — `--name "X"` and `--name="X"`, on create and on update. `create` returns `Session created!` with `Name: Untitled session`; `update` prints `Session updated: Untitled session` and changes nothing. **Every other flag in the same call takes effect.** Session names are therefore Studio-only.
+- **`create --checkin` enables the toggle but leaves Check-in Status at `closed`** — `create` has no `--checkin-status`. (Moot given the orphan bug, but note it if the bug is ever fixed.)
+- 🔴 **`sessions` prints times in UTC while Studio prints the event's local time — an unlabelled 8-hour gap on a Taipei event.** The same session reads `9:00 AM - 10:00 AM` in Studio's Schedule and `01:00 - 02:00` in `sessions list` / `show --json`. Corroborated independently by `events current` (`2026-09-16 01:00`) vs Studio Overview (`09:00 AM - 05:00 PM (+08)`). Nothing in the output names a timezone. **Read CLI session times as UTC, and set times in Studio** — whether `--start`/`--end` *accept* UTC or local is undocumented and untested, so don't use them on a live event.
+- **Session IDs are bare integers (`27`), not the `ges_abc12` prefix the help examples show.** Read the real ID from `sessions list`.
+- **`sessions` requires event-**admin** rights** — on an account where the role is `Event Creator`, `sessions list` returns a bare `Permission denied.` (verified on Acme Demo Org). Check `accounts list`'s ROLE column before concluding an event simply has no sessions.
+- **`events use <id>` silently no-ops across accounts.** Calling `events use 20037` while the active account is Micepad Taiwan prints nothing and leaves the previous event selected, so subsequent `sessions list` output describes the **old** event. Always pass `--account="..."` on `events use`, and confirm with `whoami`.
+- There is **no session-level filter on `checkins stats` / `checkins recent`** — both are event-wide. Per-session attendance numbers are a Studio read.
 
 ## Importing Participants
 
@@ -328,13 +489,22 @@ micepad pax import validate
 Show: total rows, valid, errors, warnings. Explain issues. Ask how to proceed.
 
 **Step 5 — Confirm and execute:**
-Summarize (file, event, rows, group, action). **Get explicit approval.** Then:
+Summarize (file, event, rows, group, action). **Get explicit approval.** Then run the wizard — **`micepad pax import start` does not work** (see Gotchas):
 ```bash
-micepad pax import start
+printf "1\n\ny\n" | micepad pax import <file> --identifier email --action add
 ```
-Verify: `micepad pax count --by group`.
+The wizard asks, in order: identifier (`1` = Email), a mapping-edit prompt (bare Enter accepts, or a column number to remap — it then lists target fields by number), and `Proceed with import? [y/N]`. **Dry-run it first by omitting the trailing `y`** — the wizard validates, prints the summary, then `Cancelled.` without writing. Verify after: `micepad pax count`.
 
 **Template:** `micepad pax import --template [--format xlsx]`
+
+### Import Gotchas *(all field-tested by Gale, 2026-08-14, CLI 0.4.9, importing a 201-row roster)*
+
+- **🔴 One malformed email fails the ENTIRE batch, and `errors` reports "No errors".** A single address with a stray character (real case, address synthesised: `jane.doe@example.com>` — a leftover from pasting `<addr>` out of Outlook) makes `validate` print `An error occurred. Please try again.` for all 50 rows, with **no indication of which row is at fault**. `import errors` says `No errors.` Contrast with a blank required field, which validates fine and lists the offending rows individually — so **"An error occurred" means one poisoned row, not a row-count or size limit**. Do not conclude the batch is too large: bisect the file (halve, validate, recurse) to find the row, or pre-screen emails with a strict regex before uploading (`^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$` — a loose `[^@\s]+@[^@\s]+\.[^@\s]+` passes `foo@bar.com>` and will miss it).
+- **`micepad pax import start` is unreachable** — `micepad tree` lists it under `pax > import > start`, but `pax import`'s positional `FILE` argument swallows the word `start` and the CLI prints `Usage: micepad pax import FILE`. `--` doesn't help. Every other subcommand (`upload`, `map`, `set`, `validate`, `errors`, `status`) resolves normally. **Consequence: the documented multi-step flow cannot be executed** — it configures fine and `validate` passes, but `State` never advances past `mappings` and there is no way to commit it. Use the one-shot wizard above instead; it is still interactive, so Rule 7's "no auto-import" is satisfied without `--yes`.
+- **Legacy `.xls` (Excel 97-2003 / OLE2) is rejected with a misleading error.** `upload` returns `Error: No headers found in file.` even when row 1 is a perfectly good header — the parser simply doesn't read the old binary format. Convert to CSV or `.xlsx` first. Don't go hunting for header problems that aren't there.
+- **Auto-mapping only matches the first same-named column.** Three custom fields labelled `業務一科` / `業務二科` / `業務三科` against three identically-named source columns: only column 4 auto-mapped; 5 and 6 came back blank and had to be mapped by hand every upload.
+- **`import add-field` with a non-ASCII label produces a degenerate variable name.** Labels `業務一科`/`業務二科`/`業務三科` yielded variables `field_`, `field__1`, `field__2` (the slug is empty, so it falls back to a counter). They work as mapping targets, but the names carry no meaning — and note the first one is a bare `field_`. Same root cause as the label-rewrites-variable behaviour in Known Limitations.
+- **Verifying imported custom-field values is not possible from the CLI** — `pax show --json` returns only core fields, so after importing question columns you can confirm *that* rows were created but not *that* the custom values landed. Check one participant in the Studio attendee detail page.
 
 ## List Command Conventions
 
@@ -351,7 +521,7 @@ All `list` commands share these flags:
 | `--group=NAME` | Group filter (on `pax list`) | — |
 | `--type=TYPE` | Type filter (on `campaigns list`, `forms list`) | — |
 
-**`--json` is broken** — returns table format. Don't rely on it.
+**`--json` support is partial** — verified working on `forms fields`, `forms settings`, `groups list`, `campaigns stats`, `pax list`, `admin emailcheck list` and `admin suppressions list`/`global-list` (CLI 0.4.9); some commands still return table format or plain text. Test per command before relying on it. **And "supports `--json`" does not mean "returns full values"** — `pax list --json` emits the *table-truncated* email string, so treat long fields from any `--json` output as suspect until spot-checked against a `show` command.
 
 ## Diagnostics
 
@@ -360,10 +530,24 @@ All `list` commands share these flags:
 | Auth errors | `micepad login` |
 | "No active event" | `micepad events use SLUG` |
 | Permission denied | `micepad whoami` — check role/plan |
-| Form not accepting signups | `micepad forms list` — published? |
-| Campaign 0 recipients | Did you `add-recipients`? Does the status filter match actual participants? |
+| Form not accepting signups | `micepad registration show` — master window open? Then `micepad forms list` — published? |
+| "An error occurred" on a mutation | The write may have succeeded anyway — re-read state (`forms fields ID`) before retrying, or you'll create duplicates |
+| Command misparsed as `help` | Global flags placed before the subcommand — move `--account` / `--json` after it |
+| Public form URL shows nothing | Form is still draft — publish first |
+| Registration link suddenly 404s / URL changed | Event was **renamed** — the slug regenerates from the event name and the old slug 404s with no redirect. Form ID tail is unchanged; re-issue the current `forms url ID` everywhere. Don't rename an event after sharing its link |
+| Campaign 0 recipients | Did you `add-recipients`? Does the status filter match actual participants? Note a 0-recipient campaign still records as `sent` — check `campaigns show ID` **before** sending |
+| `campaigns stats` recipients > delivered + bounced | The gap is per-recipient state the aggregate doesn't name. Sweep `admin emailcheck list EMAIL` over the participant list (`sleep 3` between calls) and bucket by `status` — usually `delayed`. Remember `delivered` in stats = delivered + opened + clicked rows |
+| Need to know **who** didn't receive a campaign | `campaigns` has no recipient-status command. Use `admin emailcheck list EMAIL` per address, disambiguating rows by a `sent_at` **window** (the log lags the send by 0–2 min) since re-sent campaigns share a subject |
+| An address gets no mail at all | `admin suppressions check EMAIL` — and check **both** `suppressions list` and `suppressions global-list`; they are separate lists. A hard bounce auto-suppresses globally within ~2 min, blocking all future events until `global-remove` |
+| `admin emailcheck list` returns `No delivery logs found` for an address you copied from `pax list --json` | The address is **truncated** — `pax list --json` cuts long emails mid-string with an ellipsis. Re-fetch it via `pax show <id>` |
+| `admin suppressions list --account=X` says `Account not found` and then lists X | Known CLI bug — `--account` fails for both names and IDs on this command. Drop the flag; the bare command returns all accounts with an `ACCOUNT` column |
 | Kiosk won't scan | `micepad qrlogin list` — tokens valid and not expired? |
-| Numbers don't match | Compare `pax count --by group` vs `--by rsvp` vs `events stats` |
+| Numbers don't match | Compare `pax count --by group` vs `--by rsvp` vs `events stats`. Note `--by group`'s `Total:` is total participants, not the sum of the rows |
+| `Group not found` for a group you can see in `groups list` | Two causes, indistinguishable by message: (1) the name has **stray/trailing whitespace** — get the exact string from `groups list --json` and pass it verbatim; (2) the **WebSocket died earlier in your batch** and every later command now returns fake domain errors — `grep` for `close 1006`, then re-run that one command alone |
+| A batch loop's results look wildly wrong | You outran the WebSocket (Rule 11). Post-drop commands return believable-but-false errors. Re-run with `sleep 3` between calls and scan the log for `Error:` before trusting it |
+| Group assignment "didn't work" but the write said `Updated:` | You probably checked with `pax show` — its `Group` field is the **Registration Type**. Verify with `pax list --group "<exact name>"` |
+| Interactive confirmation prompt fails in a script (`pax export`, `forms remove-field`) | Non-interactive shells hit EOF at the prompt. Some commands accept `printf "y\n" \|`; `pax export` does **not** — it just prints `An error occurred` and writes nothing. Fall back to `pax list` and parse, or run the export in a real terminal |
+| `pax export start` prints "Exported N participants → …" but the file is empty | The local file at the printed path is **0 bytes** — the export is generated server-side and isn't saved locally. Driving the interactive field picker with `expect` doesn't help; the file is still empty. To actually get the data (including custom question columns), export from the Studio participant table instead |
 | Duplicate form fields | `forms fields` — unhide existing hidden defaults, don't recreate |
 | Staff limit reached | Free plan restriction — check plan limits |
 | CLI outdated | `micepad version` — if update available, run `micepad update` |
@@ -383,3 +567,23 @@ micepad -e dev pax list                  # One-off command against a different e
 micepad configure --url "wss://..."      # Update current env URL (legacy, prefer env commands)
 export MICEPAD_URL="ws://localhost:3000/terminal"             # Override via env var
 ```
+
+## Changelog
+
+- **2026-08-18 — Gale** (field-tested against CLI 0.4.9 on events 20151 and 20273): documented the **`sessions`** command group, which upstream's SKILL.md does not mention at all. The headline finding is a 🔴 **data-integrity bug**: **`sessions create` produces sessions that Studio can never display** — Studio's Schedule is a two-level `Day → Session` structure and the command writes only the session's own `date` without creating or attaching the parent Day, so the record is real at the API layer and invisible in the UI (unnameable, unviewable, deletable only via a CLI-recorded ID). Three-stage proof rules out a missing prerequisite: creating the `Day` afterwards does not adopt the orphans, and a session created *while the Day already existed* is equally invisible; there is no `days` command group to repair the association. Also recorded: **`--name` is a silent no-op** on both `create` and `update` (both syntaxes, every other flag in the same call works), so session names are Studio-only; **session times print in UTC while Studio prints event-local time** — an unlabelled 8-hour gap on a Taipei event, corroborated independently by `events current`; `create --checkin` leaves Check-in Status at `closed` (no `--checkin-status` on `create`); session IDs are bare integers, not the `ges_abc12` the help examples show; `sessions` needs event-**admin** and returns a bare `Permission denied.` otherwise; and **`events use <id>` silently no-ops across accounts**, leaving later commands describing the previous event. Net guidance: **create sessions in Studio, drive check-in from the CLI** — `update --checkin` / `--checkin-status` / `--no-checkin` all work correctly on an existing session. Verified Studio route: `/{locale}/{account_id}/events/{event_id}/sessions` (tabs Schedule / Days / Tracks / Locations); there is no "Content" nav group in the current Studio and `/schedule`, `/agenda` both 404.
+- **2026-08-14 (b) — Gale** (field-tested on event 20269 / form 164, a 49-field / 41-condition registration form, CLI 0.4.9): ported the whole batch that had been sitting in the ledger without ever reaching this file. **Corrected a wrong example that was actively teaching the bug**: the conditional-display sample used `--value Vegetarian`, but select-type sources compare against the numeric **option ID** — text values are accepted, read back correctly, and never fire. Rewrote that section with the ID requirement, the DOM-scraping recipe for obtaining IDs (there is no CLI path), and confirmation that two-layer conditions work. Added **Rule 13** (labels → order → options → conditions → browser verification; the CLI cannot confirm a form works). New Forms gotchas: new fields default to `visible: no`; `update-field --label` re-slugs the variable and silently breaks bound conditions (Studio Field Text edits do the same — `company_name` → `field__11`); `--type phone` overrides `--label` with i18n; deleted labels stay reserved and re-suffix to `… 2`; date fields render `_display` + `_date` inputs and `--required` is genuinely enforced; export column order is **creation** order and deleted fields linger as orphan columns. Three new Known Limitations: **Question Text** is a second Studio-only field (Label drives the smart tag, and the smart tag ≠ the CLI's `variable`); `registration update`'s documented `--open_date`/`--close_date` flags do not exist; and **Studio's export silently collapses same-named questions, keeping the deleted one — real submitted answers went missing** (read from the attendee detail page instead, which does not de-duplicate).
+- **2026-08-10 (b) — Gale** — **retired a stale limitation**: the *Conditional field display (skip logic)* row (added 2026-07-06, "CLI is static `visible` only") is **removed** — the server-driven CLI now ships `forms field-conditions` / `set-field-condition` / `clear-field-conditions`, confirmed present in `micepad tree`. Ported upstream's conditional-display documentation into the Forms section and corrected the companion gotcha that claimed `forms fields --json` never returns real conditions. *(Second time a Gale-authored limitation has expired because upstream shipped the feature — always re-diff against `upstream/main` before opening a PR.)*
+- **2026-08-10 — Gale** (field-tested against CLI 0.4.9 while auditing campaign 152 on event 20240, 94 recipients): documented the previously-undocumented **`admin emailcheck` / `admin suppressions`** command groups — the CLI equivalent of Studio's `/admin/email_delivery_logs`, which turns "we can't tell who didn't get it" into a solved problem (`emailcheck list EMAIL` per address). Recorded that **delivery status is a progression** (`delayed`→`delivered`→`opened`→`clicked`) with only the latest kept, so `campaigns stats`' `delivered` = delivered+opened+clicked rows. Added six gotchas, the biggest being **`pax list --json` truncates long emails** (returns a literal `...`-terminated string — it silently invalidated a first-pass "the email data is clean" conclusion) and **`admin suppressions list --account` is broken for all values** (name *and* ID, error message lists the account it just rejected; omit the flag). Also: `suppressions list` (account layer) and `global-list` (global pool) are **two different lists**; `global-list` caps at 1000/page; re-sent campaigns share a subject so log rows must be matched by a `sent_at` window (log lags send 0–2 min). Noted that **`campaigns send` with 0 recipients silently succeeds and records as `sent`**. Added six Diagnostics rows.
+- **2026-08-03 (b) — Gale** (Studio form settings, events 20080 / 20071 / 20201): added **Rule 12** — internal setting values lie; `prevent_duplicate` actually means *"Update existing registration"*, not "prevent duplicate submission". Also recorded the **Registration-vs-RSVP settings split**: only `registration`-type forms carry `approval_required` (+ `auto_reject_enabled` with 1/3/7/14/30 day options) and `guest_creation_policy`; **`rsvp` forms expose neither** (0 matching fields on forms 140 and 105), which is consistent with RSVP updating existing guests rather than creating them. Registration forms also have a **smaller message set — 4, not 8**: `success`, `pending`, `closed`, `capacity_full` (no confirm/decline/confirmed/already_confirmed, since there is no invitation to accept or decline).
+- **2026-08-03 — Gale** (field-tested against CLI 0.4.9 on event 20080 / form 140): added a **Known Limitation** — a form's **8 state Messages** (`success`, `closed`, `capacity_full`, `confirm`, `confirmed`, `already_confirmed`, `decline`, `declined_confirmed`) are **unreachable from the CLI**: no `forms messages` subcommand in the server-driven `micepad tree`, `forms settings --json` exposes only `Thank You Title`, and the public form page never carries them (proof: `message_preview_controller-*.js` POSTs `preview_type` to an authenticated Studio endpoint). Documented the working escape hatch — the Studio `form_builder/forms/{id}/messages` page holds **all 8 accordions in one DOM**, so one authenticated fetch dumps everything. Also **corrected the 2026-07-07 "Open Event App" row**: the success-page button is **form-level** (`template[show_event_app_button]` on the Success Message template), not event-level — it was invisible in 2026-07-07's sweep because it lives in the CLI-unreachable Messages tab.
+- **2026-07-24 — Gale** (field-tested against CLI 0.4.9 while diffing a source roster against event 20215): added a **Known Limitation** — custom question-field answer values (e.g. a `Grouping` column) are **unreachable from the CLI**. `pax show`/`--json` return only core fields; `pax export start` lists the question in its picker and the picker can be driven with `expect`, but the file it writes locally is **0 bytes** (the export is server-side only). Added a Diagnostics row for the empty-export symptom. Workaround: export from the Studio participant table.
+- **2026-07-23 — Gale** (field-tested against CLI 0.4.9 while assigning 14 speakers to groups on event 20215): documented that **group assignment is additive** — both `pax batch --ids … --group` (the dedicated bulk command, which the 2026-07-20 note wrongly said didn't exist) and `pax update --group` **add** a group and leave existing ones intact (canary: `{5B}` + add `4A` → `{4A,5B}`). Corrected the 2026-07-20 "no dedicated command" gotcha and added `pax batch` to the command table. Added a **Known Limitation**: there is no `remove-from-group` / per-group detach in the CLI, so clearing a stale group after re-grouping is a Studio-only task — flagged as a feature gap worth closing upstream — keep the additive `--group` and add a matching detach command (`pax remove-from-group`) so both add and remove exist, rather than making `--group` replace. Regtype is unaffected (`--reg-type` is exclusive and replaces cleanly).
+- **2026-07-20 — Gale** (field-tested against CLI 0.4.9 while bulk-assigning 98 participants to 10 groups on event 20215): added **Rule 11** — the CLI's persistent WebSocket dies under back-to-back commands (`close 1006`) and every subsequent command returns a *fake domain error* instead of a connection error, so batch loops need `sleep 3` and their output must be grepped for `Error:` before it's believed. Added four **Groups & Registration Types gotchas**: group names carry inconsistent trailing whitespace that the padded table hides (resolve via `groups list --json`, pass verbatim); the `GROUP` column in `pax list`/`pax show` is the **Registration Type**, so group membership can only be read via `pax list --group`; `pax count --by group`'s `Total:` is not a row checksum; bulk assignment must loop `pax update --group`. Added five Diagnostics rows covering the same, plus `pax export`'s interactive prompt being unpipeable.
+- **2026-07-08 — Gale** (field-tested against CLI 0.4.9): added a Forms gotcha + Diagnostics row — **renaming an event regenerates its slug and 404s the old registration link with no redirect** (the form-ID tail is stable; the *form* title does not affect the URL, only the *event name* does). Verified live on mRNA event 20201.
+- **2026-07-07 — Gale** (field-tested against CLI 0.4.9): added a Known Limitation for the event **Icon/Logo** avatar — CLI only uploads the cover (`events banner`), no icon/logo command; an empty logo shows a placeholder square that looks like banner whitespace. Fix in Brand Studio → Branding.
+- **2026-07-07 — Gale** (field-tested against CLI 0.4.9): added a Known Limitation for **orphaned question columns** — `forms remove-field` only reaches fields on a live form, there's no event-level question manager in the CLI, so questions detached from a rebuilt form linger as export/data columns that only Studio can delete.
+- **2026-07-07 — Gale** (field-tested against CLI 0.4.9): added a Known Limitation for the **"Open Event App"** button — event-level Event App feature, no CLI toggle (checked `events`/`registration`/`forms` update, both `--json` dumps, and the public form hydration); disable it in Studio, one switch usually clears both the success page and the confirmation-email button.
+- **2026-07-06 — Gale** (field-tested against CLI 0.4.9 while finalizing the same registration form): added a *Conditional field display (skip logic)* row to Known Limitations (CLI is static `visible` only; `conditions` is always `-`); documented `remove-field` being interactive (silent N default in non-interactive shells) and its confirmation prompt mislabeling system-derived fields (act on the VARIABLE, re-read to confirm, prefer hiding over deleting); added a public-page recipe for verifying option text (`curl -sL -A …`, 302 redirect, hydration blob); added Rule 10 (map source fields to existing Micepad fields before creating custom ones).
+- **2026-07-05 — Gale** (field-tested against CLI 0.4.9 while building a production registration form): added *Known Limitations — Requires Studio UI*; added Rules 8 (verify writes) and 9 (flag placement); documented `registration` vs `rsvp` form types; added *Master Registration Settings*; expanded field types from 7 to 39; completed the Forms command table (`show`, `responses`, `field-types`, `remove-field`, `move-field`, `duplicate`, full `update-field` flags); added Forms gotchas (auto-suffixed labels, public vs internal title, draft URL renders nothing); updated the `--json` note from "broken" to "partial"; added four Diagnostics rows.
+- **Earlier** — Micepad Team: initial skill (v0.4.7).
+
