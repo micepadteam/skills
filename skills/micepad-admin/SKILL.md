@@ -2,13 +2,14 @@
 name: micepad-admin
 description: >
   Micepad platform administration for super admins. Monitor platform health,
-  manage accounts, users, gatherings, subscriptions, and email deliverability.
-  Private skill — requires super admin access to the Micepad platform.
+  accounts, users, events, subscriptions, email and WhatsApp delivery,
+  suppressions, webhooks, and release settings.
+  Private skill — requires super admin access.
 license: proprietary
-compatibility: Requires the Micepad CLI binary (`micepad`) installed and authenticated as a super admin.
+compatibility: Requires the Micepad CLI installed and authenticated as a super admin.
 metadata:
   author: Micepad Team
-  version: 0.1.0
+  version: 0.2.0
 invocable: true
 argument-hint: "[action] [args...]"
 triggers:
@@ -27,139 +28,121 @@ triggers:
   - login sessions
   - audit log
   - ip address
+  - micepad wacheck
+  - micepad webhooks
+  - micepad suppressions
+  - micepad print-helper
 ---
 
-# Micepad Admin Skill
+# Micepad Admin
 
-You are an agent that helps **Micepad super admins** manage the platform. This skill covers platform-wide operations: monitoring health, managing accounts, users, gatherings, subscriptions, and email deliverability.
+Use this private skill for platform-wide super admin work. Use `/micepad` for regular event operations.
 
-This is a **private skill** — it requires super admin access. Regular event managers should use the `/micepad` skill instead.
+## Discovery and safety
 
-## CLI Conventions for List Commands
-
-All admin `list` commands follow a consistent set of flags:
-
-### Standard Flags (all admin list commands)
-
-| Flag | Purpose | Default |
-|------|---------|---------|
-| `--filter=FILTER` | Ransack filter for advanced queries (e.g. `name_cont=acme,status_eq=active`) | — |
-| `--limit=N` | Max rows to return | 20 |
-| `--page=N` | Page number for pagination | 1 |
-| `--json` | Output as JSON (currently broken — returns table format) | false |
-
-### Selective Flags
-
-| Flag | Available on | Purpose |
-|------|-------------|---------|
-| `--search=TEXT` | `admin users`, `admin accounts`, `admin gatherings` | Fuzzy search by name or email |
-| `--status=STATUS` | `admin gatherings` | Filter by event status |
-
-### Ransack Filter Syntax
-
-The `--filter` flag uses Ransack predicates. Common patterns:
-- `name_cont=acme` — name contains "acme"
-- `email_cont=example.com` — email contains domain
-- `status_eq=active` — exact match
-- `created_at_gteq=2026-01-01` — created on or after date
-- Combine with commas: `name_cont=acme,status_eq=active`
-
-## Agent Invariants
-
-1. **Never fabricate CLI commands.** Only use commands documented here or discovered via `micepad tree`.
-2. **Verify super admin context.** Run `micepad whoami` before admin operations to confirm access level.
-3. **Prefer reading before writing.** List/show before any modifications.
-4. **Never expose credentials, tokens, or sensitive user data** in responses.
-
-## Admin Commands
-
-### Platform Dashboard
+Checked against CLI **0.4.9** and the **dev** server tree. The server supplies commands; prod/alpha may differ.
 
 ```bash
-micepad admin dashboard    # Platform-wide statistics (users, DAU, MAU, events, revenue)
+micepad version
+micepad whoami
+micepad admin help
+micepad admin users help disable
+micepad admin emailcheck help account
 ```
 
-### Account Management
+1. Verify environment and super admin access before acting. Do not switch environments without the user's request.
+2. Never guess commands, required arguments or flags. Use `micepad tree` and nested help. Preserve underscores or hyphens from help.
+3. Read before writing. Confirm the exact account/user/event and scope.
+4. Get approval before forced logouts, disabling users, role changes, suppression changes, test sends, resuming campaigns, or changing platform settings.
+5. Never expose credentials, session tokens, raw webhook payloads, or private user data. Redact diagnostics.
+6. `--json` is advertised but server behavior varies. Validate the actual response before parsing; do not assume a CLI-wide failure or universal support.
 
-| Command | What it does |
-|---------|-------------|
-| `micepad admin accounts` | List all accounts |
-| `micepad admin accounts --search "acme"` | Search accounts by name |
-| `micepad admin accounts --filter "name_cont=acme"` | Ransack filter |
-| `micepad admin accounts --limit 50 --page 2` | Pagination |
+```text
+Verify environment + admin -> inspect target -> confirm change -> verify result
+```
 
-### User Management
+## Command map
 
-| Command | What it does |
-|---------|-------------|
-| `micepad admin users` | List all users |
-| `micepad admin users --search "john"` | Search users by name or email |
-| `micepad admin users --filter "email_cont=example.com"` | Ransack filter |
-| `micepad admin users --limit 50 --page 2` | Pagination |
-| `micepad admin users sessions USER_ID` | List login sessions (IP, device, login time, last activity) |
-| `micepad admin users sessions USER_ID --current` | Show active sessions only (last 24h) |
-| `micepad admin users delete-session USER_ID SESSION_ID` | Force logout a specific session |
-| `micepad admin users delete-session USER_ID --all` | Force logout all sessions for a user |
+Use explicit `list` commands rather than relying on group defaults. Commands below are discovery paths; inspect their help for arguments before execution.
 
-### Gatherings (Events)
+| Area | Read commands | Commands requiring care |
+|------|---------------|-------------------------|
+| Platform | `admin dashboard`, `admin funnels` | — |
+| Accounts | `admin accounts list` | `admin accounts add_owner`, `admin accounts add_user` |
+| Users | `admin users list`, `admin users sessions`, `admin users app_version` | `admin users delete_session`, `disable`, `enable`, `set_app_version` |
+| Events | `admin gatherings list` | — |
+| Subscriptions | `admin subscriptions list` | — |
+| Email | `admin emailcheck app`, `accounts`, `list`, `templates`, `status` | `admin emailcheck account`, `send`, `campaign`, `resume` |
+| WhatsApp | `admin wacheck app`, `list`, `status` | `admin wacheck account`, `send`, `campaign` |
+| Suppressions | `admin suppressions list`, `global_list`, `check` | `admin suppressions add`, `remove`, `global_add`, `global_remove`, `sync` |
+| Incoming webhooks | `admin webhooks list`, `show`, `stats` | Treat details as sensitive |
+| AI settings | `admin ai-settings show` | `admin ai-settings set` |
+| Print Helper releases | `admin print-helper show` | `admin print-helper set` |
 
-| Command | What it does |
-|---------|-------------|
-| `micepad admin gatherings` | List all gatherings across accounts |
-| `micepad admin gatherings --search "summit"` | Search by event name |
-| `micepad admin gatherings --status published` | Filter by status |
-| `micepad admin gatherings --filter "name_cont=summit"` | Ransack filter |
-| `micepad admin gatherings --limit 50 --page 2` | Pagination |
+Shorthand entries stay under the table's command area, e.g. `admin users enable`, not `admin enable`.
 
-### Subscriptions
+## Lists and filters
 
-| Command | What it does |
-|---------|-------------|
-| `micepad admin subscriptions` | List active subscriptions |
+Check each command's help: flags and defaults vary. Users, accounts and gatherings support `--search`; gatherings also supports `--status`. Common flags:
 
-### Email Health
+| Flag | Purpose |
+|------|---------|
+| `--filter` | Supported Ransack predicates, e.g. `name_cont=acme` |
+| `--limit` | Page size; users default to 20, email account audits to 50 |
+| `--page` | Page number, generally 1 by default |
+| `--json` | Request JSON; verify actual output |
 
-| Command | What it does |
-|---------|-------------|
-| `micepad admin emailcheck` | Check email deliverability for current account |
-| `micepad admin emailcheck account` | Verify domain setup (SPF, DKIM, DMARC) |
+Combine supported filters with commas, e.g. `name_cont=acme,created_at_gteq=2026-01-01`. Never assume every model accepts every predicate.
 
-## Common Workflows
-
-### New Signup Monitoring
+## Read-only platform check
 
 ```bash
-micepad admin dashboard                    # Check overall stats
-micepad admin users --search "new-user"    # Find specific user
-micepad admin accounts --search "acme"     # Find their account
+micepad admin dashboard
+micepad admin funnels
+micepad admin gatherings list --status published --limit 20
+micepad admin subscriptions list
+micepad admin emailcheck app
+micepad admin emailcheck accounts --limit 50
+micepad admin webhooks stats
 ```
 
-### Email Deliverability Check
+Summarize findings before proposing changes. Paginate when a complete audit is needed.
+
+## Locate a user or account
 
 ```bash
-micepad admin emailcheck                   # Overall email health
-micepad admin emailcheck account           # Domain verification details
+micepad admin users list --search "user@example.com"
+micepad admin accounts list --search "acme"
+micepad admin users sessions USER_ID
+micepad admin users sessions USER_ID --current
 ```
 
-### User Session Audit
+`--current` selects sessions active in the last 24 hours. After explicit approval, force logout with:
 
 ```bash
-micepad admin users sessions usr_RErUY              # All login sessions
-micepad admin users sessions usr_RErUY --current    # Active sessions only (last 24h)
-micepad admin users delete-session usr_RErUY ses_abc12  # Force logout one session
-micepad admin users delete-session usr_RErUY --all      # Force logout all sessions
+micepad admin users delete_session USER_ID SESSION_ID
+# Or, only with approval for all devices:
+micepad admin users delete_session USER_ID --all
 ```
 
-Output includes: session ID, IP address, device/user agent, location, login time, last activity.
+Re-list sessions to verify. Do not echo IP/device details unless needed for the user's audit.
 
-### Platform Health Check
+## Email deliverability
+
+Start with read-only checks:
 
 ```bash
-micepad admin dashboard                    # DAU, MAU, total users
-micepad admin gatherings --status published --limit 20  # Active events
-micepad admin subscriptions                # Revenue/subscription status
+micepad admin emailcheck app
+micepad admin emailcheck accounts
 ```
 
-## Known Issues
+**`emailcheck account ACCOUNT_ID` sends a test email** to the admin login address in addition to checking SES/DNS/reputation. It is not a read-only domain check. Ask first, then:
 
-- **`--json` flag is broken.** Commands like `micepad admin users --json` still return table format instead of JSON. This affects commands across the CLI, not just admin. Do not rely on `--json` for machine-readable output until this is fixed server-side.
+```bash
+micepad admin emailcheck account ACCOUNT_ID
+micepad admin emailcheck status TRACKING_ID --watch
+```
+
+Use the returned tracking ID. `--watch` polls for a terminal result with a bounded timeout; a queued message is not proof of delivery. Inspect `help send`, `help campaign`, or `help resume` before those operations. Resuming a paused campaign may send real recipient mail.
+
+WhatsApp `account`, `send`, and `campaign` also send messages. Confirm the recipient and scope. Never remove account/global suppressions simply to make a test succeed.
