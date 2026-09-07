@@ -9,7 +9,7 @@ license: MIT
 compatibility: Requires the Micepad CLI binary (`micepad`) installed and authenticated.
 metadata:
   author: Micepad Team
-  version: 0.4.8
+  version: 0.4.9
   homepage: https://github.com/micepad/skills
 invocable: true
 argument-hint: "[action] [args...]"
@@ -44,6 +44,12 @@ triggers:
   - set up event
   - event ready
   - conference day
+  - event app
+  - live interaction
+  - lead capture
+  - event website
+  - survey
+  - eventbrite
   - walk-in
 ---
 
@@ -62,6 +68,22 @@ You are an experienced event operations partner who manages events through the `
 5. **Capture IDs from output.** Commands return prefixed IDs (`frm_abc12`, `cmp_xyz99`, `pax_abc123`). Parse and reuse them.
 6. **Never expose credentials, tokens, or session data.**
 7. **Never auto-import.** No `--yes`, no one-shot import. Always the multi-step workflow. See **Importing Participants**.
+
+## CLI Discovery
+
+Checked against CLI **0.4.9** and the **dev** server command tree. Commands come from the selected server, so prod/alpha may differ. Run `micepad version` and `micepad tree`, then nested help before using a new command:
+
+```bash
+micepad app interaction help create_poll
+micepad content speakers help create
+micepad forms notifications help route
+```
+
+Use the exact arguments and flags from help; tree names can contain underscores. Local commands (`version`, `update`, `env`) do not appear in server help. Never switch environments or update the binary without the user's request.
+
+For Event App, websites, shared content, surveys, ticketing, reports, integrations, and team operations, read [references/current-cli.md](references/current-cli.md).
+
+Confirm deletes, bulk changes, access changes, purchases, invitations, and sends before executing. Never print secret QR credentials or signed download URLs.
 
 ## Assess Before You Act
 
@@ -238,10 +260,11 @@ micepad forms unpublish frm_xxx                 # Close registration
 | `micepad forms field-conditions ID SLUG` | Inspect conditional display rules |
 | `micepad forms set-field-condition ID SLUG` | `--source`, `--operator`, `--value`, `--logic and/or`, `--append` |
 | `micepad forms clear-field-conditions ID SLUG` | Remove conditional display rules |
-| `micepad forms reorder ID` / `update ID` | `--title`, `--subtitle`, `--description`, `--submit_label` |
+| `micepad forms reorder ID` / `move_field ID SLUG --position N` | Inspect order / move a field (check help for arguments) |
+| `micepad forms update ID` | `--title`, `--subtitle`, `--description`, `--submit_label` |
 | `micepad forms publish ID` / `unpublish ID` / `url ID` | Lifecycle |
 
-**Field types**: `company`, `job_title`, `country`, `dropdown`, `text`, `long_text`, `paragraph`
+**Field types**: Run `micepad forms field_types` for the current list before adding fields.
 
 **Conditional display**: Rules show/hide a target field based on an earlier visible answerable source field. Always run `forms fields` first to get field variables and ordering. Use `field-conditions` before changing existing logic. Examples:
 
@@ -305,8 +328,10 @@ micepad badges add-field ID --type qr_code
 
 **Step 1 — Upload:**
 ```bash
-micepad pax import upload <file> [--group "Group Name"]
+micepad pax import upload <file> [--group "Registration Type Name"]
 ```
+
+Import `--group` selects a **registration type**, not a participant group. Inspect `regtypes list` first. The CLI transfers local files into client storage; exports also land in client storage, not necessarily the working directory.
 
 **Step 2 — Review mappings (mandatory):**
 ```bash
@@ -321,6 +346,8 @@ micepad pax import add-field "Label" <type>
 micepad pax import mappings                      # Re-show after each change
 ```
 
+Inspect `micepad pax import set` before validation. Confirm the identifier and action (`add`, `update`, or `both`); do not silently accept an update-capable default. Use `micepad pax import fields` to discover mapping targets.
+
 **Step 4 — Validate:**
 ```bash
 micepad pax import validate
@@ -328,17 +355,17 @@ micepad pax import validate
 Show: total rows, valid, errors, warnings. Explain issues. Ask how to proceed.
 
 **Step 5 — Confirm and execute:**
-Summarize (file, event, rows, group, action). **Get explicit approval.** Then:
+Summarize (file, account, event, rows, registration type, identifier, action). **Get explicit approval.** Then:
 ```bash
 micepad pax import start
 ```
-Verify: `micepad pax count --by group`.
+Verify with `micepad pax import status`, inspect `micepad pax import errors` for failures, then check participant counts.
 
 **Template:** `micepad pax import --template [--format xlsx]`
 
 ## List Command Conventions
 
-All `list` commands share these flags:
+Common list flags are below. Support and defaults vary; check each command's help rather than assuming every list accepts them:
 
 | Flag | Purpose | Default |
 |------|---------|---------|
@@ -351,7 +378,7 @@ All `list` commands share these flags:
 | `--group=NAME` | Group filter (on `pax list`) | — |
 | `--type=TYPE` | Type filter (on `campaigns list`, `forms list`) | — |
 
-**`--json` is broken** — returns table format. Don't rely on it.
+`--json` is advertised, but output depends on the server command. Check that the actual response parses as JSON before scripting against it; do not assume either JSON support or a CLI-wide failure.
 
 ## Diagnostics
 
